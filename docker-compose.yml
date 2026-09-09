@@ -40,14 +40,14 @@ services:
     # X-Forwarded-For / X-Real-IP (the backend reads those headers), or use
     # `network_mode: host` instead of the bridge network (then drop `ports`).
 
-  # The database. Everything except the replay frames lives here.
-  #
-  # TimescaleDB rather than plain Postgres because `items` is the table that
-  # grows without bound and is only ever read by time: as a hypertable it is one
-  # chunk per day, the dashboard's daily counts come from a continuous aggregate
-  # instead of a full scan, old chunks compress, and expiring data is a chunk
-  # drop rather than a DELETE. The backend runs on a plain Postgres too — it
-  # falls back to an ordinary view — but then nothing expires on its own.
+    # The database. Everything except the replay frames lives here.
+    #
+    # TimescaleDB rather than plain Postgres because `items` is the table that
+    # grows without bound and is only ever read by time: as a hypertable it is one
+    # chunk per day, the dashboard's daily counts come from a continuous aggregate
+    # instead of a full scan, old chunks compress, and expiring data is a chunk
+    # drop rather than a DELETE. The backend runs on a plain Postgres too — it
+    # falls back to an ordinary view — but then nothing expires on its own.
   timescaledb:
     image: timescale/timescaledb:2.30.0-pg17
     container_name: sightpane-db
@@ -55,6 +55,8 @@ services:
       POSTGRES_DB: sightpane
       POSTGRES_USER: sightpane
       POSTGRES_PASSWORD: "${POSTGRES_PASSWORD:-sightpane}" # change this in production
+    env_file:
+      - .env
     ports:
       # Loopback only: this is here so `docker compose up -d timescaledb` plus a
       # backend built locally works, and for psql. Set POSTGRES_PORT when 5432 is
@@ -66,7 +68,7 @@ services:
     healthcheck:
       # The backend migrates the schema on start, so it must not connect before
       # the server is actually accepting connections.
-      test: ["CMD-SHELL", "pg_isready -U sightpane -d sightpane"]
+      test: [ "CMD-SHELL", "pg_isready -U sightpane -d sightpane" ]
       interval: 5s
       timeout: 5s
       retries: 20
@@ -87,7 +89,7 @@ services:
   ceph:
     image: quay.io/ceph/demo:latest
     container_name: sightpane-ceph
-    profiles: ["ceph"]
+    profiles: [ "ceph" ]
     environment:
       # A single-node demo cluster: one monitor, one OSD, no redundancy.
       MON_IP: 127.0.0.1
@@ -110,7 +112,7 @@ services:
     healthcheck:
       # The gateway answering at all is enough; an anonymous list is a 403,
       # which still proves it is up and signing requests.
-      test: ["CMD-SHELL", "curl -sf -o /dev/null -w '%{http_code}' http://127.0.0.1:8080/ | grep -qE '200|403'"]
+      test: [ "CMD-SHELL", "curl -sf -o /dev/null -w '%{http_code}' http://127.0.0.1:8080/ | grep -qE '200|403'" ]
       interval: 10s
       timeout: 5s
       retries: 30
