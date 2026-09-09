@@ -9,7 +9,7 @@ look · Fix shape · Acceptance). Every file is written with code coordinates; t
 |---|---|---|---|
 | 0a | [00a-i18n.md](00a-i18n.md) | **done** | Multi-language in the dashboard and the backend: ARB/gen-l10n, error codes, language selection |
 | 0b | [00b-timescaledb-postgres.md](00b-timescaledb-postgres.md) | **done** | SQLite → Postgres + TimescaleDB: hypertable, time_bucket, retention. Frame expiry was left to 08 |
-| 01 | [01-source-maps.md](01-source-maps.md) | high | Making `minified:Class447` stack traces readable in release builds |
+| 01 | [01-source-maps.md](01-source-maps.md) | **done** | Making `minified:Class447` stack traces readable in release builds, and stopping grouping drift between builds |
 | 02 | [02-alerts-notifications.md](02-alerts-notifications.md) | high | E-mail, Slack and webhooks on a new error, a regression or a rate increase |
 | 03 | [03-performance.md](03-performance.md) | high | Transaction/span tracing: route load, gRPC/HTTP timings, app start, jank |
 | 04 | [04-release-health.md](04-release-health.md) | medium | Crash-free sessions per release, adoption, resolved/regressed release |
