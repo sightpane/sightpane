@@ -1,5 +1,9 @@
 # feat(backend,docker): SQLite → PostgreSQL + TimescaleDB (hypertable, time_bucket, retention policy)
 
+> **Done** in `feat(store,docker)!: replace SQLite with TimescaleDB`. The plan
+> below is kept as written; what actually shipped differs from it in three ways
+> and is recorded under [Outcome](#outcome) at the end. Read that first.
+
 ## Problem
 
 The backend is tied to a single SQLite file with a single writer: `Open` sets
@@ -149,6 +153,8 @@ ClickHouse (rejected in 11); `sqlc`/`gorm` (template complexity for two dialects
 for 52 queries); making `sessions` a hypertable (it breaks the `ON CONFLICT(id)` upsert and the
 `SessionProject` authorization query).
 
+**Superseded:** keeping SQLite was rejected in turn while this was being built — see Outcome.
+
 ## Acceptance
 
 - [ ] starting up with `SIGHTPANE_DB=postgres://…` creates the `timescaledb` extension, the `items`
@@ -169,3 +175,105 @@ for 52 queries); making `sessions` a hypertable (it breaks the `ON CONFLICT(id)`
 - [ ] `docker compose --profile postgres up` brings up the dashboard + backend + timescaledb;
       the env table in `backend/README.md` (`SIGHTPANE_DB`, `SIGHTPANE_TEST_DB`), the root README "Docker"
       and the Backend section of `CLAUDE.md` (ALTER list → migrations directory) are up to date
+
+---
+
+## Outcome
+
+Shipped as one commit. Three decisions were taken during the work that this plan
+did not have, and they are the difference between reading the plan and reading
+the code.
+
+**1. SQLite is gone, not kept alongside.** The plan's "Rejected: dropping SQLite"
+line did not survive contact with the dialect layer: two dialects meant a
+`rebind` step on every query, two schemas, two sets of timestamp handling and a
+second CI job, all to keep a database that cannot do a hypertable, a continuous
+aggregate or a retention policy — the three things this issue exists for. Every
+query is now written once with `$n` placeholders and no translation layer. What
+that cost:
+
+- **no migration path.** `sightpane migrate --from sightpane.db` was written and
+  then deleted with the rest. An existing `sightpane.db` cannot be moved into
+  Postgres by this backend; the acceptance item for it is dropped, not deferred.
+- **the `hog.db` fallback went with it**, and with it one of the pre-rename
+  compatibility promises in `CLAUDE.md`. `X-Hog-Key`, `HOG_*` and
+  `package:flutter_hog/` are untouched.
+- **`SIGHTPANE_DB` is required** and has no default. Starting without it fails.
+
+**2. Plain Postgres is a supported fallback.** Not in the plan, but cheap: the
+second migration has two variants, `postgres/timescale/` and `postgres/plain/`,
+and `items_daily` is a continuous aggregate in one and an ordinary view in the
+other. Every query reads the same names either way. A managed Postgres that will
+not install the extension works; nothing compresses or expires there. The variant
+is part of the recorded migration version, so a database that later gains the
+extension picks the timescale file up. CI runs both.
+
+**3. `frames` stayed an ordinary table.** The plan left this open. A hypertable's
+unique index has to include the partitioning column, which would turn the
+`(session_id, seq)` upsert of a resent frame into a second row, and a retention
+policy can only drop the row while the PNG next to it lives in the blob store.
+Consequence: **nothing expires frames or their PNGs today** — that is issue 08's
+job and it is not written yet. `items` retention does not touch them, because
+`items` rows have no PNG.
+
+Two smaller deviations: `body_json` and the other JSON columns are `TEXT`, not
+`JSONB` (the dashboard gets back exactly what the SDK sent, and nothing queries
+inside a body); and `EventSummary` reads raw `items` rather than `items_daily`,
+because its distinct-visitor count needs the session behind every event, which a
+continuous aggregate cannot hold — see the measurement below.
+
+One fix nobody asked for: an incoming `ts` now goes through `parseTS` and is
+normalised to UTC. A timestamp carrying a `+03:00` offset used to land in the
+wrong day bucket, because the day was the first ten characters of the string.
+
+### Measured
+
+`tool/seed` produces the numbers; 1,000,003 items over 91 chunks, 20k sessions,
+through the full `docker compose` stack:
+
+| | |
+|---|---|
+| `GET /projects/1/stats?days=14` | **9–11 ms** (target < 50) |
+| `GET /projects/1/live` | **0.2–1.1 ms** (target < 5) |
+| `GET /projects/1/events/summary?days=14` | **165 ms** |
+| `daily errors` against `items_daily` alone | 0.6 ms |
+
+The 165 ms is the known cost of the `COUNT(DISTINCT visitor_key)` join: chunk
+exclusion works (14 of 91 chunks touched) and 124k rows are joined and sorted.
+It is a page load, not the once-a-second poll `stats` and `live` are, so it was
+left alone. Bringing it down means an approximate distinct count
+(`timescaledb_toolkit` hyperloglog) or denormalising `visitor_key` onto `items`,
+neither of which is worth it yet.
+
+### Acceptance, as it stands
+
+- [x] `SIGHTPANE_DB=postgres://…` creates the extension, the `items` hypertable
+      and the `items_daily` continuous aggregate — pinned by
+      `internal/store/schema_test.go`, which also checks
+      `materialized_only = false`; without it a freshly ingested event would be
+      missing from the chart meant to show it
+- [ ] ~~`SIGHTPANE_DB` empty behaves exactly as SQLite did~~ — dropped, see (1)
+- [x] the same test files pass on both databases; two CI jobs in
+      `.github/workflows/ci.yml` — `timescaledb` and `postgres` rather than
+      `sqlite` and `timescaledb`
+- [x] the JSON of `/stats` and `/events/summary` is unchanged field for field
+      (timestamps are `TIMESTAMPTZ` in the column and still RFC3339Nano UTC
+      strings on the wire); the dashboard was built and driven through
+      `docker compose up`, and neither `sightpane/ui` nor `sightpane/flutter`
+      needs a change
+- [x] 1M items: `Stats` and `Live` inside budget, measured above, reproducible
+      with `go run ./tool/seed`
+- [x] the retention policy is live and tracks `SIGHTPANE_RETENTION_DAYS` on every
+      restart (zero removes it); **but** no PNG is swept, because `frames` is not
+      a hypertable — see (3). A 91-day-old `items` row is dropped by the policy;
+      that drop was not observed against real data, only the job asserted
+- [ ] ~~`go run . migrate --from sightpane.db --to $SIGHTPANE_DB`~~ — dropped, see (1)
+- [x] `docker compose up -d --build` brings up the dashboard, the backend and
+      timescaledb; the backend waits on the database's health check and migrates
+      the schema itself. There is no `--profile postgres`: the database is not
+      optional any more. README, root README and `CLAUDE.md` are updated
+
+### Left for 08
+
+Frame expiry: a job that deletes `frames` rows and the PNGs behind them.
+`SIGHTPANE_RETENTION_DAYS` already exists and is the value it should read.

@@ -39,10 +39,15 @@ RUN mkdir -p /out && if [ "$UI_REF" != "none" ]; then \
 #    which is what lets the binary run on the bare alpine below.
 FROM golang:1.26-alpine AS backend
 WORKDIR /src
-COPY go.mod go.sum ./
-RUN go mod download
 COPY . .
-RUN CGO_ENABLED=0 go build -ldflags="-s -w" -o /sightpane .
+# `go build .` and not a separate `go mod download`: the latter fetches every
+# module in go.mod, and internal/testdb pulls testcontainers and its docker and
+# otel trees in for the tests alone. Building the main package downloads only
+# what the binary actually imports. The cache mounts do the layer caching the
+# copy-go.mod-first trick used to.
+RUN --mount=type=cache,target=/go/pkg/mod \
+    --mount=type=cache,target=/root/.cache/go-build \
+    CGO_ENABLED=0 go build -ldflags="-s -w" -o /sightpane .
 
 # 3) The runtime image.
 FROM alpine:3.20

@@ -45,6 +45,12 @@ rather than a `DELETE`. The daily counts behind the dashboard come from
 on, so what was just ingested is in the chart immediately. With a million items,
 `GET /projects/{id}/stats?days=14` answers in ~10 ms and `/live` in ~1 ms.
 
+`tool/seed` fills a database with enough data to check that for yourself:
+
+```bash
+go run ./tool/seed --items 1000000      # reads SIGHTPANE_DB
+```
+
 `sessions`, `issues`, `frames`, `users` and `projects` stay ordinary tables:
 ingest upserts a session by its id alone, which a hypertable's partitioning column
 would break.
@@ -247,6 +253,8 @@ docker compose up -d --build      # http://localhost:8790 → dashboard + API
 
 Two containers: the backend and TimescaleDB. The backend waits for the database's
 health check and migrates the schema itself on start, so there is no setup step.
+The database is published on `127.0.0.1:5432` for `psql` and for running a
+locally built backend against it; set `POSTGRES_PORT` when that port is taken.
 
 [`Dockerfile`](Dockerfile) has three stages: a dashboard build that clones
 [sightpane/ui](https://github.com/sightpane/ui) at `UI_REF` and builds it with the

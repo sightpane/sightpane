@@ -33,9 +33,12 @@ go test -race ./...                                        # before committing
 go test -run TestIngestAndQuery ./internal/server/         # a single test
 SIGHTPANE_TEST_DB=postgres://sightpane:sightpane@127.0.0.1:5432/sightpane?sslmode=disable go test ./...
 
-docker compose up -d timescaledb                           # the database on its own
+docker compose up -d timescaledb                           # the database on its own, on :5432
 go build -o /tmp/sightpane . && SIGHTPANE_DEFAULT_KEY=dev \
   SIGHTPANE_DB=postgres://sightpane:sightpane@127.0.0.1:5432/sightpane?sslmode=disable /tmp/sightpane   # :8790
+
+# enough data to measure the read path, and the timings, in one command
+go run ./tool/seed --items 1000000
 
 # the dashboard, from a checkout of github.com/sightpane/ui
 SIGHTPANE_UI_DIR=../ui/build/web /tmp/sightpane

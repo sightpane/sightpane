@@ -55,6 +55,11 @@ services:
       POSTGRES_DB: sightpane
       POSTGRES_USER: sightpane
       POSTGRES_PASSWORD: "${POSTGRES_PASSWORD:-sightpane}" # change this in production
+    ports:
+      # Loopback only: this is here so `docker compose up -d timescaledb` plus a
+      # backend built locally works, and for psql. Set POSTGRES_PORT when 5432 is
+      # already taken on the machine.
+      - "127.0.0.1:${POSTGRES_PORT:-5432}:5432"
     volumes:
       - pg-data:/var/lib/postgresql/data
     restart: unless-stopped

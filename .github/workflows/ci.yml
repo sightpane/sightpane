@@ -1,0 +1,115 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# A push that lands while an earlier run is still going cancels it: the older
+# answer is about code nobody is looking at any more.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # The store has no in-memory mode, so the tests need a real server. Locally
+  # they start their own container; here a service container is already running,
+  # which SIGHTPANE_TEST_DB points them at.
+  #
+  # Both rows matter. TimescaleDB is what a deployment runs on and the only place
+  # the hypertable, the continuous aggregate and the retention policy exist;
+  # plain Postgres is the fallback for a managed server that will not install the
+  # extension, and it is a different migration file, so it can break on its own.
+  test:
+    name: test (${{ matrix.db }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - db: timescaledb
+            image: timescale/timescaledb:2.30.0-pg17
+          - db: postgres
+            image: postgres:17-alpine
+    services:
+      db:
+        image: ${{ matrix.image }}
+        env:
+          POSTGRES_USER: sightpane
+          POSTGRES_PASSWORD: sightpane
+          POSTGRES_DB: sightpane
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U sightpane -d sightpane"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    env:
+      SIGHTPANE_TEST_DB: postgres://sightpane:sightpane@127.0.0.1:5432/sightpane?sslmode=disable
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - run: go vet ./...
+      # -race, because that is what the contributing notes ask for before a
+      # commit and it is the only place it runs automatically.
+      - run: go test -race ./...
+
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: gofmt
+        run: |
+          unformatted=$(gofmt -l .)
+          if [ -n "$unformatted" ]; then
+            echo "not gofmt'd:"; echo "$unformatted"; exit 1
+          fi
+      - run: go build ./...
+      # The module graph has to be settled: a stray dependency or a missing sum
+      # entry only shows up on a clean machine otherwise.
+      - name: go mod tidy is a no-op
+        run: |
+          go mod tidy
+          git diff --exit-code -- go.mod go.sum
+
+  # UI_REF=none skips the Flutter stage, so this checks the Go build and the
+  # runtime image in about a minute instead of the fifteen a dashboard build
+  # takes. The dashboard is built and released from its own repository.
+  image:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: docker build (API only)
+        run: docker build --build-arg UI_REF=none -t sightpane:ci .
+      - name: the image starts and answers /health
+        run: |
+          docker network create sp-ci
+          docker run -d --name sp-db --network sp-ci \
+            -e POSTGRES_USER=sightpane -e POSTGRES_PASSWORD=sightpane -e POSTGRES_DB=sightpane \
+            timescale/timescaledb:2.30.0-pg17
+          for _ in $(seq 1 60); do
+            docker exec sp-db pg_isready -U sightpane -d sightpane -q && break
+            sleep 1
+          done
+          docker run -d --name sp-app --network sp-ci -p 8790:8790 \
+            -e SIGHTPANE_DB="postgres://sightpane:sightpane@sp-db:5432/sightpane?sslmode=disable" \
+            sightpane:ci
+          for _ in $(seq 1 30); do
+            curl -fsS localhost:8790/api/v1/health && break
+            sleep 1
+          done
+          curl -fsS localhost:8790/api/v1/health | grep -q '"status":"ok"'
+          # The schema has to have been migrated by the container itself.
+          docker exec sp-db psql -U sightpane -d sightpane -tAc \
+            "SELECT count(*) FROM timescaledb_information.hypertables WHERE hypertable_name='items'" | grep -qx 1
+      - name: logs
+        if: failure()
+        run: docker logs sp-app; docker logs sp-db
