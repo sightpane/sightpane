@@ -22,6 +22,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"strings"
 )
 
 // ErrNotFound is returned by Get when the key is absent. Callers translate it
@@ -68,3 +69,41 @@ func sessionPrefix(sessionID string) string { return sessionID + "/" }
 // past six digits simply get longer; ordering only matters within a session and
 // no session comes close.
 func pad6(seq int) string { return fmt.Sprintf("%06d", seq) }
+
+// --- Release artifacts ---
+//
+// Source maps share the object store with the frames: one bucket, one directory,
+// one set of credentials to configure. They are namespaced under `sourcemaps/`
+// while a frame key starts with a session id — 32 hex characters — so the two
+// cannot collide and an existing `frames/<session>/<seq>.png` tree is untouched.
+
+// ArtifactKey is the object key for one uploaded file of one release.
+func ArtifactKey(projectID int64, release, filename string) string {
+	return ReleasePrefix(projectID, release) + safeSegment(filename)
+}
+
+// ReleasePrefix is every artifact of one release, for deletion.
+func ReleasePrefix(projectID int64, release string) string {
+	return fmt.Sprintf("sourcemaps/%d/%s/", projectID, safeSegment(release))
+}
+
+// safeSegment keeps a caller-supplied name to one path segment. The FS backend
+// already neutralises `..`, but a release named `a/b` would otherwise put its
+// files in a directory nothing lists, and an S3 prefix delete would miss them.
+func safeSegment(s string) string {
+	s = strings.Map(func(r rune) rune {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9':
+			return r
+		case r == '.' || r == '-' || r == '_' || r == '+':
+			return r
+		default:
+			return '_'
+		}
+	}, s)
+	// A name of dots only would still address a directory.
+	if strings.Trim(s, ".") == "" {
+		return "_"
+	}
+	return s
+}

@@ -61,10 +61,11 @@ func main() {
 	}
 
 	st, err := store.Open(store.Options{
-		DSN:           cfg.DB,
-		DataDir:       cfg.DataDir,
-		Frames:        frames,
-		RetentionDays: cfg.RetentionDays,
+		DSN:                 cfg.DB,
+		DataDir:             cfg.DataDir,
+		Frames:              frames,
+		RetentionDays:       cfg.RetentionDays,
+		SourceMapCacheBytes: int64(cfg.SourceMapCacheMB) << 20,
 	})
 	if err != nil {
 		log.Fatalf("store: %v", err)

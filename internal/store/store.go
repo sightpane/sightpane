@@ -27,6 +27,7 @@ import (
 
 	"sightpane/internal/apierr"
 	"sightpane/internal/blob"
+	"sightpane/internal/symbol"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
@@ -42,6 +43,10 @@ type Store struct {
 	// timescale reports whether the extension was available. The queries do not
 	// care, because items_daily exists either way; retention and compression do.
 	timescale bool
+	// symbols resolves minified release frames to source locations, over the
+	// maps uploaded for a release. It is a cache in front of the blob store, so
+	// the hot ingest path parses a 30 MB map once rather than per error.
+	symbols *symbol.Cache
 	// connName is the pgx registration this handle was opened through, kept so
 	// Close can drop it again.
 	connName string
@@ -80,6 +85,9 @@ type Options struct {
 	// RetentionDays drops items older than this. It is a TimescaleDB retention
 	// policy, so it does nothing without the extension. Zero keeps everything.
 	RetentionDays int
+	// SourceMapCacheBytes bounds the parsed source maps held in memory. Zero
+	// takes symbol.DefaultMaxBytes.
+	SourceMapCacheBytes int64
 }
 
 // Open connects, migrates the schema and applies the retention policy.
@@ -96,6 +104,7 @@ func Open(opt Options) (*Store, error) {
 		frames = fs
 	}
 	s := &Store{blobs: frames}
+	s.symbols = symbol.New(s, opt.SourceMapCacheBytes)
 	if err := s.connect(opt.DSN); err != nil {
 		return nil, err
 	}

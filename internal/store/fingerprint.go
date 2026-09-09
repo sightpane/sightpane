@@ -10,6 +10,8 @@ import (
 	"encoding/hex"
 	"regexp"
 	"strings"
+
+	"sightpane/internal/symbol"
 )
 
 var (
@@ -26,7 +28,26 @@ var (
 // three stack frames that belong to application code, and the title from the
 // type plus the first line of the message (truncated).
 func Fingerprint(exception, message, stack string) (fp string, title string) {
-	frames := appFrames(stack, 3)
+	return fingerprintOf(exception, message, stack, nil)
+}
+
+// fingerprintOf is Fingerprint with the frames a source map resolved, when there
+// are any. It exists because a minified release stack contains no `package:`
+// frame at all: appFrames finds nothing, the key falls back to the message, and
+// two builds of the same code land in two groups because the minified names
+// moved. Resolved frames name real files, which do not.
+//
+// One thing this deliberately does not do is make a release group with the debug
+// build of the same error. It cannot: a debug stack says `package:myapp/a.dart`
+// while a dart2js map says `lib/a.dart`, and the package name is not in the map.
+// Matching them would mean keying on the basename, which regroups every issue
+// ever recorded and collides two files of the same name in different
+// directories — a bigger decision than this function.
+func fingerprintOf(exception, message, stack string, resolved []symbol.Resolved) (fp string, title string) {
+	frames := resolvedFrames(resolved, 3)
+	if len(frames) == 0 {
+		frames = appFrames(stack, 3)
+	}
 	var key string
 	if len(frames) > 0 {
 		key = exception + "|" + strings.Join(frames, "|")
@@ -74,6 +95,28 @@ func isFrameworkFrame(l string) bool {
 		}
 	}
 	return false
+}
+
+// resolvedFrames is appFrames over frames a source map already resolved. The
+// strings it builds have the same shape appFrames produces — `member (file` —
+// so both paths feed the same key, and only frames that actually resolved are
+// used: an unresolved one still carries a minified name that changes with every
+// build, which is the thing being fixed.
+func resolvedFrames(frames []symbol.Resolved, n int) []string {
+	var out []string
+	for _, f := range frames {
+		if !f.Resolved || f.File == "" {
+			continue
+		}
+		if isFrameworkFrame(f.File) {
+			continue
+		}
+		out = append(out, f.Function+" ("+f.File)
+		if len(out) == n {
+			break
+		}
+	}
+	return out
 }
 
 // appFrames returns the first n stack frames that belong to the application,

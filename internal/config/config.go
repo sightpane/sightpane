@@ -24,6 +24,9 @@ type Config struct {
 	// DB is the database, as a `postgres://…` URL or a libpq key/value string.
 	// It is required: there is no local default to fall back to.
 	DB string
+	// SourceMapCacheMB bounds the parsed release source maps held in memory. A
+	// dart2js map is 10–30 MB, so the default is a handful of releases.
+	SourceMapCacheMB int
 	// RetentionDays drops items older than this many days. It is enforced by a
 	// TimescaleDB retention policy, so it does nothing on a Postgres without the
 	// extension. Zero keeps everything forever.
@@ -71,16 +74,17 @@ type S3Config struct {
 
 func Load() Config {
 	return Config{
-		Addr:           env("ADDR", ":8790"),
-		DataDir:        env("DATA", "./data"),
-		DB:             env("DB", ""),
-		RetentionDays:  envInt("RETENTION_DAYS", 90),
-		AdminEmail:     env("ADMIN_EMAIL", "admin@sightpane.local"),
-		AdminPassword:  env("ADMIN_PASSWORD", "admin123"),
-		DefaultProject: env("DEFAULT_PROJECT", "default"),
-		DefaultKey:     env("DEFAULT_KEY", "dev"),
-		UIDir:          env("UI_DIR", ""),
-		Frames:         env("FRAMES", "fs"),
+		Addr:             env("ADDR", ":8790"),
+		DataDir:          env("DATA", "./data"),
+		DB:               env("DB", ""),
+		RetentionDays:    envInt("RETENTION_DAYS", 90),
+		SourceMapCacheMB: envInt("SOURCEMAP_CACHE_MB", 128),
+		AdminEmail:       env("ADMIN_EMAIL", "admin@sightpane.local"),
+		AdminPassword:    env("ADMIN_PASSWORD", "admin123"),
+		DefaultProject:   env("DEFAULT_PROJECT", "default"),
+		DefaultKey:       env("DEFAULT_KEY", "dev"),
+		UIDir:            env("UI_DIR", ""),
+		Frames:           env("FRAMES", "fs"),
 		S3: S3Config{
 			Endpoint:  env("S3_ENDPOINT", ""),
 			Bucket:    env("S3_BUCKET", "sightpane-frames"),

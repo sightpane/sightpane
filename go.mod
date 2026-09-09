@@ -3,6 +3,7 @@ module sightpane
 go 1.25.0
 
 require (
+	github.com/go-sourcemap/sourcemap v2.1.4+incompatible
 	github.com/gofiber/fiber/v3 v3.5.0
 	github.com/jackc/pgx/v5 v5.11.0
 	github.com/minio/minio-go/v7 v7.3.0

@@ -125,6 +125,16 @@ the awesome-fiber and gofiber/recipes selections that match this codebase.
   only from `SIGHTPANE_TRUSTED_PROXIES` (policy IGNORE elsewhere, never SKIP) —
   `internal/server/proxy_test.go` uses real sockets because the library default
   (REQUIRE) was only visible there.
+- **Source maps.** `internal/symbol` resolves a minified release stack at ingest:
+  the SDK sends `frames[{uri,line,column,member}]` beside the raw `stack`, and a
+  map uploaded for that `release` maps them to `lib/…dart:120`. Resolved frames
+  are preferred by `fingerprintOf`, which is what stops a release from landing in
+  a new group every build. The result goes in `items.symbolicated_json`, never
+  inside `body_json` — that stays exactly what the SDK sent. Maps live in the
+  blob store under `sourcemaps/<project>/<release>/`, parsed once into a
+  size-bounded LRU (`SIGHTPANE_SOURCEMAP_CACHE_MB`). Uploading is owner-only with
+  a user token, not the project key. A release does **not** group with its debug
+  build; the reason is in `fingerprintOf`'s comment and it is a decision.
 - Issue grouping is `internal/store/fingerprint.go`: exception type + first three
   app frames with line numbers stripped (`package:flutter/`, `package:sightpane/`,
   `dart:` frames skipped; message fallback normalizes digits). Changing

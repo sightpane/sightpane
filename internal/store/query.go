@@ -107,6 +107,10 @@ type Item struct {
 	Body    json.RawMessage `json:"body"`
 	IssueID *int64          `json:"issue_id,omitempty"`
 	Session string          `json:"session_id,omitempty"`
+	// Symbolicated is `{"frames":[…]}` for an error from a release build whose
+	// source map was uploaded, and absent otherwise. It sits beside Body rather
+	// than inside it because Body is what the SDK sent, unaltered.
+	Symbolicated json.RawMessage `json:"symbolicated,omitempty"`
 }
 
 type Frame struct {
@@ -136,7 +140,7 @@ func (s *Store) GetSession(id string) (*SessionDetail, error) {
 	// the session's own timestamps, and an SDK with a skewed clock can report an
 	// item outside them. Visiting one index per chunk is the price of never
 	// dropping an item from the session it belongs to.
-	rows, err := s.db.Query(`SELECT id, ts, type, name, body_json, issue_id FROM items WHERE session_id=$1 ORDER BY ts, id`, id)
+	rows, err := s.db.Query(`SELECT id, ts, type, name, body_json, issue_id, symbolicated_json FROM items WHERE session_id=$1 ORDER BY ts, id`, id)
 	if err != nil {
 		return nil, err
 	}
@@ -144,10 +148,14 @@ func (s *Store) GetSession(id string) (*SessionDetail, error) {
 	for rows.Next() {
 		var it Item
 		var body string
-		if err := rows.Scan(&it.ID, tsCol{&it.TS}, &it.Type, &it.Name, &body, &it.IssueID); err != nil {
+		var symbolicated sql.NullString
+		if err := rows.Scan(&it.ID, tsCol{&it.TS}, &it.Type, &it.Name, &body, &it.IssueID, &symbolicated); err != nil {
 			return nil, err
 		}
 		it.Body = json.RawMessage(body)
+		if symbolicated.Valid {
+			it.Symbolicated = json.RawMessage(symbolicated.String)
+		}
 		d.Items = append(d.Items, it)
 	}
 	if err := rows.Err(); err != nil {
@@ -240,7 +248,7 @@ func (s *Store) GetIssue(id int64) (*IssueDetail, error) {
 	// could match — an occurrence cannot predate the issue — and it is what lets
 	// a hypertable skip every chunk older than the issue instead of scanning the
 	// whole history to satisfy ORDER BY ts DESC.
-	rows, err := s.db.Query(`SELECT id, session_id, ts, type, name, body_json FROM items WHERE issue_id=$1 AND ts>=$2 ORDER BY ts DESC LIMIT 50`, id, asTime(i.FirstSeen))
+	rows, err := s.db.Query(`SELECT id, session_id, ts, type, name, body_json, symbolicated_json FROM items WHERE issue_id=$1 AND ts>=$2 ORDER BY ts DESC LIMIT 50`, id, asTime(i.FirstSeen))
 	if err != nil {
 		return nil, err
 	}
@@ -248,10 +256,14 @@ func (s *Store) GetIssue(id int64) (*IssueDetail, error) {
 	for rows.Next() {
 		var it Item
 		var body string
-		if err := rows.Scan(&it.ID, &it.Session, tsCol{&it.TS}, &it.Type, &it.Name, &body); err != nil {
+		var symbolicated sql.NullString
+		if err := rows.Scan(&it.ID, &it.Session, tsCol{&it.TS}, &it.Type, &it.Name, &body, &symbolicated); err != nil {
 			return nil, err
 		}
 		it.Body = json.RawMessage(body)
+		if symbolicated.Valid {
+			it.Symbolicated = json.RawMessage(symbolicated.String)
+		}
 		d.Occurrences = append(d.Occurrences, it)
 	}
 	return d, rows.Err()

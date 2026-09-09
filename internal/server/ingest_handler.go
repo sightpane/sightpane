@@ -46,6 +46,11 @@ func (s *Server) ingest(c fiber.Ctx) error {
 	if err != nil {
 		return err
 	}
+	// The app's body limit is sized for source-map uploads; an envelope has its
+	// own, smaller cap, so this is where it is enforced.
+	if len(c.Body()) > maxEnvelopeBytes {
+		return apierr.New(fiber.StatusRequestEntityTooLarge, apierr.CodeEnvelopeTooBig, "envelope too large")
+	}
 	var env store.Envelope
 	if err := json.Unmarshal(c.Body(), &env); err != nil {
 		return apierr.New(fiber.StatusBadRequest, apierr.CodeBadJSON, "invalid json: "+err.Error())

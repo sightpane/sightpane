@@ -69,6 +69,7 @@ no `ALTER` list to keep in step any more.
 | `SIGHTPANE_ADDR` | `:8790` | listen address |
 | `SIGHTPANE_DB` | — | **required**: `postgres://user:pw@host:5432/sightpane?sslmode=disable`, or a libpq key/value string |
 | `SIGHTPANE_RETENTION_DAYS` | `90` | items older than this are dropped by a TimescaleDB retention policy; `0` keeps everything |
+| `SIGHTPANE_SOURCEMAP_CACHE_MB` | `128` | parsed release source maps held in memory; a dart2js map is 10–30 MB |
 | `SIGHTPANE_DATA` | `./data` | `frames/<session>/<seq>.png`, when the frames are on disk |
 | `SIGHTPANE_ADMIN_EMAIL` / `SIGHTPANE_ADMIN_PASSWORD` | `admin@sightpane.local` / `admin123` | admin created on first start (if missing) |
 | `SIGHTPANE_DEFAULT_PROJECT` / `SIGHTPANE_DEFAULT_KEY` | `default` / `dev` | project guaranteed to exist on start; the admin becomes its owner |
@@ -240,8 +241,42 @@ first three stack frames in application code (line/column numbers are stripped;
 message is used with its numbers normalised. A resolved group reopens
 automatically when it is seen again.
 
+### Release builds and source maps
+
+A minified web build has no readable stack: the frames name `main.dart.js`, not
+your code, and because the minified names move with every build the same failure
+lands in a new group each release. Upload the map that `flutter build web
+--source-maps` writes and the backend resolves the frames at ingest, both for
+display and for grouping:
+
+```bash
+curl -X POST -H "Authorization: Bearer $TOKEN" \
+  -F file=@build/web/main.dart.js.map \
+  http://localhost:8790/api/v1/projects/1/releases/1.0.0/sourcemaps
+```
+
+| Endpoint | |
+|---|---|
+| `POST /api/v1/projects/{id}/releases/{release}/sourcemaps` | multipart `file`, owner only |
+| `GET /api/v1/projects/{id}/releases[?release=]` | what has been uploaded |
+| `DELETE /api/v1/projects/{id}/releases/{release}/artifacts/{filename}` | owner only |
+
+The release in the path is the one the SDK reports in `device.release`, so the
+two have to match. Upload before the build is deployed: an error that arrives
+first is stored unsymbolicated and stays that way — nothing backfills yet.
+
+The resolved frames are returned beside the item as `symbolicated`, never inside
+`body`, which is still exactly what the SDK sent. A frame the map does not cover
+comes back marked unresolved rather than being dropped, and the minified original
+is kept next to every resolved frame, because a wrong map is otherwise invisible.
+
+What this does **not** do is make a release group together with a debug build of
+the same error. A debug stack says `package:myapp/a.dart` and a dart2js map says
+`lib/a.dart`; matching them means keying on the file's basename, which regroups
+every issue ever recorded. That is a decision, not an oversight.
+
 CORS is open to every origin (Flutter web posts from another port). The envelope
-limit is 32 MB. Requests that are not files and not under `/api/` are answered
+limit is 32 MB and a source map upload 96 MB. Requests that are not files and not under `/api/` are answered
 with the dashboard's `index.html`, because it is a single-page app; `/api/` paths
 keep returning a JSON 404.
 

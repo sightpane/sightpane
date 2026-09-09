@@ -40,6 +40,10 @@ const (
 	CodeFrameNotFound   = "frame.not_found"
 	CodeIssueNotFound   = "issue.not_found"
 
+	CodeReleaseRequired  = "release.required"
+	CodeArtifactName     = "release.artifact_name"
+	CodeArtifactNotFound = "release.artifact_not_found"
+
 	CodeKeyRequired    = "envelope.key_required"
 	CodeUnknownKey     = "envelope.unknown_key"
 	CodeEnvelopeTooBig = "envelope.too_large"

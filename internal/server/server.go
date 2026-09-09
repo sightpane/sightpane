@@ -22,8 +22,14 @@ import (
 )
 
 // maxEnvelopeBytes caps one SDK envelope. Frames are base64 PNGs, so a batch of
-// them is the only thing that ever approaches this.
+// them is the only thing that ever approaches this. It is checked in the ingest
+// handler, because the body limit below has to be larger for source maps.
 const maxEnvelopeBytes = 32 << 20
+
+// maxUploadBytes caps a release artifact. A dart2js source map for a real app
+// runs 10–30 MB, and the whole file has to arrive in one request because a map
+// is only usable complete.
+const maxUploadBytes = 96 << 20
 
 // SourceURL satisfies AGPL §13: everyone served over the network is told where
 // the source is. It is also shown in the dashboard.
@@ -47,9 +53,10 @@ func New(st *store.Store, uiDir string, embedded fs.FS) *fiber.App {
 
 	app := fiber.New(fiber.Config{
 		AppName: "sightpane",
-		// One envelope can legitimately be large; anything past this is a bug
-		// or an attack, and 413 tells the SDK to stop retrying.
-		BodyLimit: maxEnvelopeBytes,
+		// Sized for the largest thing anyone posts, which is a source map, not
+		// an envelope; the ingest handler holds envelopes to their own, smaller
+		// limit. 413 tells the SDK to stop retrying either way.
+		BodyLimit: maxUploadBytes,
 		// Every handler returns an error instead of writing a status itself, so
 		// the status/code/message shape lives in exactly one place.
 		ErrorHandler: errorHandler,
@@ -100,6 +107,14 @@ func New(st *store.Store, uiDir string, embedded fs.FS) *fiber.App {
 	api.Get("/projects/:id/sessions", s.requireProject(roleMember), s.listSessions)
 	api.Get("/projects/:id/issues", s.requireProject(roleMember), s.listIssues)
 	api.Get("/projects/:id/events/summary", s.requireProject(roleMember), s.eventSummary)
+
+	// Release artifacts. Uploading is an owner action with a user token: a
+	// source map is a build output, not something the app posts with its key.
+	// A release name goes in the path, so one containing a slash has to be
+	// percent-encoded by the caller.
+	api.Get("/projects/:id/releases", s.requireProject(roleMember), s.listReleaseArtifacts)
+	api.Post("/projects/:id/releases/:release/sourcemaps", s.requireProject(roleOwner), s.uploadSourceMap)
+	api.Delete("/projects/:id/releases/:release/artifacts/:filename", s.requireProject(roleOwner), s.deleteReleaseArtifact)
 
 	// Session and issue details are addressed globally, so each one resolves its
 	// own project before checking membership.

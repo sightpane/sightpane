@@ -5,10 +5,12 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"io"
+	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -666,5 +668,181 @@ func TestIngestAcceptsBothProjectKeyHeaders(t *testing.T) {
 	req.Header.Set("Content-Type", "application/json")
 	if rr := send(t, app, req); rr.Code != 401 || errCode(rr) != apierr.CodeKeyRequired {
 		t.Fatalf("no key: %d %q", rr.Code, errCode(rr))
+	}
+}
+
+// --- Source maps ---
+
+// One mapping, written out rather than pasted from a build: generated line 1
+// column 0, and again on generated line 2, both from sources[0] line 119
+// (0-based, so 120 on screen) column 4, in names[0]. The encoding is base64 VLQ
+// of deltas; internal/symbol/symbol_test.go builds these programmatically and
+// explains it.
+//
+// Two generated lines mapping to one source line is the whole point: it is what
+// a rebuild looks like, where the same Dart code lands somewhere else in the
+// bundle.
+const sourceMapFixture = `{"version":3,"file":"main.dart.js",` +
+	`"sources":["org-dartlang-app:///lib/cashier.dart"],` +
+	`"names":["openTill"],"mappings":"AAuHIA;AAAAA"}`
+
+// postSourceMap uploads a map the way a deploy script would: multipart, owner
+// token, no project API key — the key ships inside the app and may only write
+// envelopes.
+func postSourceMap(t *testing.T, app *fiber.App, path, filename, body string) resp {
+	t.Helper()
+	var buf bytes.Buffer
+	w := multipart.NewWriter(&buf)
+	f, err := w.CreateFormFile("file", filename)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.Write([]byte(body)); err != nil {
+		t.Fatal(err)
+	}
+	w.Close()
+	req := httptest.NewRequest("POST", path, bytes.NewReader(buf.Bytes()))
+	req.Header.Set("Content-Type", w.FormDataContentType())
+	if userTok != "" {
+		req.Header.Set("Authorization", "Bearer "+userTok)
+	}
+	return send(t, app, req)
+}
+
+// releaseEnvelope is envelope() with a release, which is what ties an error to
+// an uploaded map.
+func releaseEnvelope(session, release string, items ...map[string]any) map[string]any {
+	e := envelope(session, items...)
+	e["session"].(map[string]any)["device"] = map[string]any{
+		"platform": "web", "release": release, "browser": "Chrome",
+	}
+	return e
+}
+
+func webError(message, member string, line int) map[string]any {
+	return map[string]any{
+		"type": "error", "message": message, "exception": "StateError",
+		// What a minified release build actually sends: the stack is JavaScript
+		// and names nothing, and `frames` is the same thing already parsed.
+		"stack": "Error\n    at " + member + " (https://app.example.com/main.dart.js:" + strconv.Itoa(line) + ":1)",
+		"frames": []map[string]any{
+			{"uri": "https://app.example.com/main.dart.js", "line": line, "column": 1, "member": member},
+		},
+	}
+}
+
+func TestSourceMapsSymbolicateAndStopGroupingDrift(t *testing.T) {
+	h, _ := newTestServer(t)
+
+	if rr := postSourceMap(t, h, "/api/v1/projects/1/releases/1.0.0/sourcemaps", "main.dart.js.map", sourceMapFixture); rr.Code != 201 {
+		t.Fatalf("upload: %d %s", rr.Code, rr.Body.String())
+	}
+	var arts []store.ReleaseArtifact
+	get(t, h, "/api/v1/projects/1/releases?release=1.0.0", &arts)
+	if len(arts) != 1 || arts[0].Filename != "main.dart.js.map" || arts[0].Size == 0 {
+		t.Fatalf("artifact list: %+v", arts)
+	}
+
+	// Two errors from the same Dart line, at two different places in the bundle
+	// — one build and the next. Today both would group by message, and with two
+	// different messages they would be two issues.
+	for _, e := range []map[string]any{
+		webError("Bad state: till 7 is jammed", "aI.$2", 1),
+		webError("Bad state: till 9 is jammed", "zQ.$0", 2),
+	} {
+		if rr := post(t, h, "/api/v1/envelope", "key1", releaseEnvelope("web1", "1.0.0", e)); rr.Code != 202 {
+			t.Fatalf("ingest: %d %s", rr.Code, rr.Body.String())
+		}
+	}
+
+	var issues []store.Issue
+	get(t, h, "/api/v1/projects/1/issues", &issues)
+	if len(issues) != 1 || issues[0].Count != 2 {
+		t.Fatalf("two builds of one failure must be one issue seen twice: %+v", issues)
+	}
+
+	var d store.IssueDetail
+	get(t, h, "/api/v1/issues/1", &d)
+	if len(d.Occurrences) != 2 {
+		t.Fatalf("occurrences: %+v", d.Occurrences)
+	}
+	var got struct {
+		Frames []struct {
+			File, Function, Minified string
+			Line                     int
+			Resolved                 bool
+		} `json:"frames"`
+	}
+	if err := json.Unmarshal(d.Occurrences[0].Symbolicated, &got); err != nil {
+		t.Fatalf("symbolicated: %v (%s)", err, d.Occurrences[0].Symbolicated)
+	}
+	if len(got.Frames) != 1 {
+		t.Fatalf("frames: %+v", got.Frames)
+	}
+	f := got.Frames[0]
+	if f.File != "lib/cashier.dart" || f.Line != 120 || f.Function != "openTill" || !f.Resolved {
+		t.Fatalf("frame not resolved to source: %+v", f)
+	}
+	// The minified original stays on the record: a map can be wrong, and this is
+	// the only way anyone finds out.
+	if !strings.Contains(f.Minified, "main.dart.js") {
+		t.Fatalf("minified frame lost: %+v", f)
+	}
+	// What the SDK sent is handed back untouched; the resolution sits beside it.
+	if !strings.Contains(string(d.Occurrences[0].Body), `"stack"`) {
+		t.Fatalf("the raw body must be unchanged: %s", d.Occurrences[0].Body)
+	}
+}
+
+// A project that never uploads a map — every native app, and any web app that
+// has not set this up — has to behave exactly as it did before.
+func TestWithoutASourceMapNothingChanges(t *testing.T) {
+	h, _ := newTestServer(t)
+	e := webError("Bad state: boom", "aI.$2", 1)
+	if rr := post(t, h, "/api/v1/envelope", "key1", releaseEnvelope("web2", "2.0.0", e)); rr.Code != 202 {
+		t.Fatalf("ingest: %d %s", rr.Code, rr.Body.String())
+	}
+	var d store.IssueDetail
+	get(t, h, "/api/v1/issues/1", &d)
+	if len(d.Occurrences) != 1 {
+		t.Fatalf("occurrences: %+v", d.Occurrences)
+	}
+	if d.Occurrences[0].Symbolicated != nil {
+		t.Fatalf("nothing should be symbolicated without a map: %s", d.Occurrences[0].Symbolicated)
+	}
+}
+
+// Uploading is a deploy-time action with a user token. A member may look, only
+// an owner may write, and the project API key cannot do it at all.
+func TestSourceMapUploadIsOwnerOnly(t *testing.T) {
+	h, st := newTestServer(t)
+	saved := userTok
+	defer func() { userTok = saved }()
+
+	member, err := st.CreateUser("member@x.io", "Member", "secret1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.AddMember(1, member.ID, "member"); err != nil {
+		t.Fatal(err)
+	}
+	userTok, _ = st.IssueToken(member.ID)
+	if rr := postSourceMap(t, h, "/api/v1/projects/1/releases/1.0.0/sourcemaps", "main.dart.js.map", sourceMapFixture); rr.Code != 403 {
+		t.Fatalf("a member must not upload: %d", rr.Code)
+	}
+	if rr := get(t, h, "/api/v1/projects/1/releases", nil); rr.Code != 200 {
+		t.Fatalf("a member may list: %d", rr.Code)
+	}
+
+	userTok = ""
+	if rr := postSourceMap(t, h, "/api/v1/projects/1/releases/1.0.0/sourcemaps", "main.dart.js.map", sourceMapFixture); rr.Code != 401 {
+		t.Fatalf("anonymous must not upload: %d", rr.Code)
+	}
+
+	userTok = saved
+	// Only a source map: an arbitrary file would be a way to use the server as
+	// a file host.
+	if rr := postSourceMap(t, h, "/api/v1/projects/1/releases/1.0.0/sourcemaps", "payload.zip", "not a map"); rr.Code != 400 {
+		t.Fatalf("a non-map upload must be rejected: %d %s", rr.Code, rr.Body.String())
 	}
 }

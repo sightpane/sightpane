@@ -9,6 +9,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"log"
 	"strings"
 	"time"
@@ -180,6 +181,7 @@ func (s *Store) DeleteProject(id int64) error {
 	}
 	defer tx.Rollback()
 	for _, q := range []string{
+		`DELETE FROM release_artifacts WHERE project_id=$1`,
 		`DELETE FROM frames WHERE session_id IN (SELECT id FROM sessions WHERE project_id=$1)`,
 		`DELETE FROM items WHERE project_id=$1`,
 		`DELETE FROM issues WHERE project_id=$1`,
@@ -202,6 +204,9 @@ func (s *Store) DeleteProject(id int64) error {
 		if err := s.blobs.DeletePrefix(ctx, blob.SessionPrefix(sid)); err != nil {
 			log.Printf("delete project %d: frames of session %s: %v", id, sid, err)
 		}
+	}
+	if err := s.blobs.DeletePrefix(ctx, fmt.Sprintf("sourcemaps/%d/", id)); err != nil {
+		log.Printf("delete project %d: source maps: %v", id, err)
 	}
 	return nil
 }

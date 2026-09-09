@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"sightpane/internal/blob"
+	"sightpane/internal/symbol"
 )
 
 // --- Envelope ingest ---
@@ -45,6 +46,11 @@ type itemHead struct {
 	Taps      any    `json:"taps"`
 	Category  string `json:"category"`
 	Route     string `json:"route"`
+	// Frames is the stack the SDK already parsed out of the browser's own
+	// format. It is only sent by a web build, where `stack` is minified
+	// JavaScript that the backend can map back to Dart with an uploaded source
+	// map. An SDK that does not send it loses nothing: `stack` is unchanged.
+	Frames []symbol.Frame `json:"frames"`
 }
 
 type IngestResult struct {
@@ -195,7 +201,17 @@ func (s *Store) Ingest(ctx context.Context, projectID int64, env *Envelope, ip s
 			}
 			frames++
 		case "error":
-			fp, title := Fingerprint(h.Exception, h.Message, h.Stack)
+			// Resolving before fingerprinting is the point of the exercise: a
+			// minified stack has no `package:` frame, so today's grouping falls
+			// back to the message and every release lands in its own group.
+			resolved := s.symbols.Resolve(ctx, projectID, d.Release, h.Frames)
+			var symbolicated any // NULL unless something actually resolved
+			if len(resolved) > 0 {
+				if b, err := json.Marshal(map[string]any{"frames": resolved}); err == nil {
+					symbolicated = string(b)
+				}
+			}
+			fp, title := fingerprintOf(h.Exception, h.Message, h.Stack, resolved)
 			// RETURNING on the upsert: the id of the row that was inserted or
 			// the one that was updated, without a second lookup.
 			var issueID int64
@@ -204,7 +220,8 @@ func (s *Store) Ingest(ctx context.Context, projectID int64, env *Envelope, ip s
 				RETURNING id`, projectID, fp, title, h.Exception, ts, ts).Scan(&issueID); err != nil {
 				return nil, err
 			}
-			if _, err := tx.Exec(`INSERT INTO items(session_id, project_id, ts, type, name, body_json, issue_id) VALUES($1,$2,$3,$4,$5,$6,$7)`, env.Session.ID, projectID, ts, "error", title, string(raw), issueID); err != nil {
+			if _, err := tx.Exec(`INSERT INTO items(session_id, project_id, ts, type, name, body_json, issue_id, symbolicated_json) VALUES($1,$2,$3,$4,$5,$6,$7,$8)`,
+				env.Session.ID, projectID, ts, "error", title, string(raw), issueID, symbolicated); err != nil {
 				return nil, err
 			}
 			errs++
