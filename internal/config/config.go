@@ -10,6 +10,7 @@ package config
 import (
 	"log"
 	"os"
+	"strconv"
 	"strings"
 	"sync"
 )
@@ -17,8 +18,16 @@ import (
 type Config struct {
 	// Addr is the listen address, e.g. ":8790" or "127.0.0.1:18790".
 	Addr string
-	// DataDir holds sightpane.db and frames/<session>/<seq>.png.
+	// DataDir holds frames/<session>/<seq>.png, when the frames are on disk.
 	DataDir string
+
+	// DB is the database, as a `postgres://…` URL or a libpq key/value string.
+	// It is required: there is no local default to fall back to.
+	DB string
+	// RetentionDays drops items older than this many days. It is enforced by a
+	// TimescaleDB retention policy, so it does nothing on a Postgres without the
+	// extension. Zero keeps everything forever.
+	RetentionDays int
 
 	// AdminEmail/AdminPassword are created on first start if absent, so a fresh
 	// install can be logged into without a setup step.
@@ -64,6 +73,8 @@ func Load() Config {
 	return Config{
 		Addr:           env("ADDR", ":8790"),
 		DataDir:        env("DATA", "./data"),
+		DB:             env("DB", ""),
+		RetentionDays:  envInt("RETENTION_DAYS", 90),
 		AdminEmail:     env("ADMIN_EMAIL", "admin@sightpane.local"),
 		AdminPassword:  env("ADMIN_PASSWORD", "admin123"),
 		DefaultProject: env("DEFAULT_PROJECT", "default"),
@@ -107,6 +118,21 @@ func env(name, def string) string {
 		return v
 	}
 	return def
+}
+
+// envInt reads a whole number, and keeps the default when the value is not one
+// rather than failing to start over a typo in an optional setting.
+func envInt(name string, def int) int {
+	v := env(name, "")
+	if v == "" {
+		return def
+	}
+	n, err := strconv.Atoi(v)
+	if err != nil {
+		log.Printf("%s%s=%q is not a number; using %d", prefix, name, v, def)
+		return def
+	}
+	return n
 }
 
 // oldNamesInUse lists the deprecated variables that are actually set, so the

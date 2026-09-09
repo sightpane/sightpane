@@ -14,6 +14,7 @@ import (
 	"errors"
 	"io"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -55,7 +56,7 @@ const sessionCols = `id, project_id, started_at, last_seen_at, ended_at, user_id
 func scanSession(sc interface{ Scan(...any) error }) (*Session, error) {
 	var s Session
 	var user, device, props string
-	if err := sc.Scan(&s.ID, &s.ProjectID, &s.StartedAt, &s.LastSeenAt, &s.EndedAt, &s.UserID, &user, &device, &props, &s.Platform, &s.Release, &s.ErrorCount, &s.EventCount, &s.FrameCount, &s.IP, &s.Browser, &s.VisitorKey, &s.Route); err != nil {
+	if err := sc.Scan(&s.ID, &s.ProjectID, tsCol{&s.StartedAt}, tsCol{&s.LastSeenAt}, nullTSCol{&s.EndedAt}, &s.UserID, &user, &device, &props, &s.Platform, &s.Release, &s.ErrorCount, &s.EventCount, &s.FrameCount, &s.IP, &s.Browser, &s.VisitorKey, &s.Route); err != nil {
 		return nil, err
 	}
 	s.User, s.Device, s.Props = json.RawMessage(user), json.RawMessage(device), json.RawMessage(props)
@@ -63,11 +64,16 @@ func scanSession(sc interface{ Scan(...any) error }) (*Session, error) {
 }
 
 func (s *Store) ListSessions(f SessionFilter) ([]Session, error) {
-	q := `SELECT ` + sessionCols + ` FROM sessions WHERE project_id=?`
+	// The one query assembled at runtime, so the placeholders are numbered from
+	// the argument list rather than written into the text.
+	q := `SELECT ` + sessionCols + ` FROM sessions WHERE project_id=$1`
 	args := []any{f.ProjectID}
+	next := func(v any) string {
+		args = append(args, v)
+		return "$" + strconv.Itoa(len(args))
+	}
 	if f.UserID != "" {
-		q += ` AND user_id=?`
-		args = append(args, f.UserID)
+		q += ` AND user_id=` + next(f.UserID)
 	}
 	if f.OnlyErrors {
 		q += ` AND error_count>0`
@@ -76,8 +82,7 @@ func (s *Store) ListSessions(f SessionFilter) ([]Session, error) {
 	if limit <= 0 || limit > 500 {
 		limit = 100
 	}
-	q += ` ORDER BY last_seen_at DESC LIMIT ?`
-	args = append(args, limit)
+	q += ` ORDER BY last_seen_at DESC LIMIT ` + next(limit)
 	rows, err := s.db.Query(q, args...)
 	if err != nil {
 		return nil, err
@@ -119,7 +124,7 @@ type SessionDetail struct {
 }
 
 func (s *Store) GetSession(id string) (*SessionDetail, error) {
-	sess, err := scanSession(s.db.QueryRow(`SELECT `+sessionCols+` FROM sessions WHERE id=?`, id))
+	sess, err := scanSession(s.db.QueryRow(`SELECT `+sessionCols+` FROM sessions WHERE id=$1`, id))
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
 	}
@@ -127,7 +132,11 @@ func (s *Store) GetSession(id string) (*SessionDetail, error) {
 		return nil, err
 	}
 	d := &SessionDetail{Session: *sess, Items: []Item{}, Frames: []Frame{}}
-	rows, err := s.db.Query(`SELECT id, ts, type, name, body_json, issue_id FROM items WHERE session_id=? ORDER BY ts, id`, id)
+	// No lower bound on ts here, unlike GetIssue: a bound would have to come from
+	// the session's own timestamps, and an SDK with a skewed clock can report an
+	// item outside them. Visiting one index per chunk is the price of never
+	// dropping an item from the session it belongs to.
+	rows, err := s.db.Query(`SELECT id, ts, type, name, body_json, issue_id FROM items WHERE session_id=$1 ORDER BY ts, id`, id)
 	if err != nil {
 		return nil, err
 	}
@@ -135,7 +144,7 @@ func (s *Store) GetSession(id string) (*SessionDetail, error) {
 	for rows.Next() {
 		var it Item
 		var body string
-		if err := rows.Scan(&it.ID, &it.TS, &it.Type, &it.Name, &body, &it.IssueID); err != nil {
+		if err := rows.Scan(&it.ID, tsCol{&it.TS}, &it.Type, &it.Name, &body, &it.IssueID); err != nil {
 			return nil, err
 		}
 		it.Body = json.RawMessage(body)
@@ -144,7 +153,7 @@ func (s *Store) GetSession(id string) (*SessionDetail, error) {
 	if err := rows.Err(); err != nil {
 		return nil, err
 	}
-	frows, err := s.db.Query(`SELECT seq, ts, width, height, taps_json FROM frames WHERE session_id=? ORDER BY seq`, id)
+	frows, err := s.db.Query(`SELECT seq, ts, width, height, taps_json FROM frames WHERE session_id=$1 ORDER BY seq`, id)
 	if err != nil {
 		return nil, err
 	}
@@ -152,7 +161,7 @@ func (s *Store) GetSession(id string) (*SessionDetail, error) {
 	for frows.Next() {
 		var f Frame
 		var taps string
-		if err := frows.Scan(&f.Seq, &f.TS, &f.Width, &f.Height, &taps); err != nil {
+		if err := frows.Scan(&f.Seq, tsCol{&f.TS}, &f.Width, &f.Height, &taps); err != nil {
 			return nil, err
 		}
 		f.Taps = json.RawMessage(taps)
@@ -169,7 +178,7 @@ func (s *Store) GetSession(id string) (*SessionDetail, error) {
 // 404 to paper over.
 func (s *Store) FrameReader(ctx context.Context, sessionID string, seq int) (io.ReadCloser, int64, error) {
 	var n int
-	if err := s.db.QueryRow(`SELECT COUNT(*) FROM frames WHERE session_id=? AND seq=?`, sessionID, seq).Scan(&n); err != nil {
+	if err := s.db.QueryRow(`SELECT COUNT(*) FROM frames WHERE session_id=$1 AND seq=$2`, sessionID, seq).Scan(&n); err != nil {
 		return nil, 0, err
 	}
 	if n == 0 {
@@ -191,9 +200,9 @@ type Issue struct {
 }
 
 func (s *Store) ListIssues(projectID int64, includeResolved bool) ([]Issue, error) {
-	q := `SELECT id, project_id, fingerprint, title, exception, first_seen, last_seen, count, resolved FROM issues WHERE project_id=?`
+	q := `SELECT id, project_id, fingerprint, title, exception, first_seen, last_seen, count, resolved FROM issues WHERE project_id=$1`
 	if !includeResolved {
-		q += ` AND resolved=0`
+		q += ` AND NOT resolved`
 	}
 	rows, err := s.db.Query(q+` ORDER BY last_seen DESC LIMIT 500`, projectID)
 	if err != nil {
@@ -203,7 +212,7 @@ func (s *Store) ListIssues(projectID int64, includeResolved bool) ([]Issue, erro
 	out := []Issue{}
 	for rows.Next() {
 		var i Issue
-		if err := rows.Scan(&i.ID, &i.ProjectID, &i.Fingerprint, &i.Title, &i.Exception, &i.FirstSeen, &i.LastSeen, &i.Count, &i.Resolved); err != nil {
+		if err := rows.Scan(&i.ID, &i.ProjectID, &i.Fingerprint, &i.Title, &i.Exception, tsCol{&i.FirstSeen}, tsCol{&i.LastSeen}, &i.Count, &i.Resolved); err != nil {
 			return nil, err
 		}
 		out = append(out, i)
@@ -218,8 +227,8 @@ type IssueDetail struct {
 
 func (s *Store) GetIssue(id int64) (*IssueDetail, error) {
 	var i Issue
-	err := s.db.QueryRow(`SELECT id, project_id, fingerprint, title, exception, first_seen, last_seen, count, resolved FROM issues WHERE id=?`, id).
-		Scan(&i.ID, &i.ProjectID, &i.Fingerprint, &i.Title, &i.Exception, &i.FirstSeen, &i.LastSeen, &i.Count, &i.Resolved)
+	err := s.db.QueryRow(`SELECT id, project_id, fingerprint, title, exception, first_seen, last_seen, count, resolved FROM issues WHERE id=$1`, id).
+		Scan(&i.ID, &i.ProjectID, &i.Fingerprint, &i.Title, &i.Exception, tsCol{&i.FirstSeen}, tsCol{&i.LastSeen}, &i.Count, &i.Resolved)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
 	}
@@ -227,7 +236,11 @@ func (s *Store) GetIssue(id int64) (*IssueDetail, error) {
 		return nil, err
 	}
 	d := &IssueDetail{Issue: i, Occurrences: []Item{}}
-	rows, err := s.db.Query(`SELECT id, session_id, ts, type, name, body_json FROM items WHERE issue_id=? ORDER BY ts DESC LIMIT 50`, id)
+	// The lower bound is the issue's own first_seen. It excludes nothing that
+	// could match — an occurrence cannot predate the issue — and it is what lets
+	// a hypertable skip every chunk older than the issue instead of scanning the
+	// whole history to satisfy ORDER BY ts DESC.
+	rows, err := s.db.Query(`SELECT id, session_id, ts, type, name, body_json FROM items WHERE issue_id=$1 AND ts>=$2 ORDER BY ts DESC LIMIT 50`, id, asTime(i.FirstSeen))
 	if err != nil {
 		return nil, err
 	}
@@ -235,7 +248,7 @@ func (s *Store) GetIssue(id int64) (*IssueDetail, error) {
 	for rows.Next() {
 		var it Item
 		var body string
-		if err := rows.Scan(&it.ID, &it.Session, &it.TS, &it.Type, &it.Name, &body); err != nil {
+		if err := rows.Scan(&it.ID, &it.Session, tsCol{&it.TS}, &it.Type, &it.Name, &body); err != nil {
 			return nil, err
 		}
 		it.Body = json.RawMessage(body)
@@ -245,7 +258,7 @@ func (s *Store) GetIssue(id int64) (*IssueDetail, error) {
 }
 
 func (s *Store) SetIssueResolved(id int64, resolved bool) error {
-	res, err := s.db.Exec(`UPDATE issues SET resolved=? WHERE id=?`, resolved, id)
+	res, err := s.db.Exec(`UPDATE issues SET resolved=$1 WHERE id=$2`, resolved, id)
 	if err != nil {
 		return err
 	}
@@ -269,10 +282,14 @@ func (s *Store) EventSummary(projectID int64, days int) ([]EventCount, error) {
 	if days <= 0 {
 		days = 7
 	}
-	since := time.Now().UTC().AddDate(0, 0, -days).Format(time.RFC3339Nano)
-	rows, err := s.db.Query(`SELECT i.name, substr(i.ts,1,10) AS day, COUNT(*), COUNT(DISTINCT s.visitor_key)
+	since := time.Now().UTC().AddDate(0, 0, -days)
+	// This one reads the raw items rather than items_daily. The distinct visitor
+	// count needs the session behind every event, which a continuous aggregate
+	// cannot hold, so joining sessions is unavoidable and the aggregate would
+	// only add a second pass over the same rows.
+	rows, err := s.db.Query(`SELECT i.name, `+utcDay("i.ts")+` AS day, COUNT(*), COUNT(DISTINCT s.visitor_key)
 		FROM items i JOIN sessions s ON s.id=i.session_id
-		WHERE i.project_id=? AND i.type='event' AND i.ts>=? GROUP BY i.name, day ORDER BY day DESC, COUNT(*) DESC`, projectID, since)
+		WHERE i.project_id=$1 AND i.type='event' AND i.ts>=$2 GROUP BY i.name, day ORDER BY day DESC, COUNT(*) DESC`, projectID, since)
 	if err != nil {
 		return nil, err
 	}
@@ -293,7 +310,7 @@ func (s *Store) EventSummary(projectID int64, days int) ([]EventCount, error) {
 // against.
 func (s *Store) SessionProject(sessionID string) (int64, error) {
 	var pid int64
-	if err := s.db.QueryRow(`SELECT project_id FROM sessions WHERE id=?`, sessionID).Scan(&pid); err != nil {
+	if err := s.db.QueryRow(`SELECT project_id FROM sessions WHERE id=$1`, sessionID).Scan(&pid); err != nil {
 		return 0, ErrNotFound
 	}
 	return pid, nil
@@ -303,7 +320,7 @@ func (s *Store) SessionProject(sessionID string) (int64, error) {
 // check as SessionProject: issue ids are global too.
 func (s *Store) IssueProject(issueID int64) (int64, error) {
 	var pid int64
-	if err := s.db.QueryRow(`SELECT project_id FROM issues WHERE id=?`, issueID).Scan(&pid); err != nil {
+	if err := s.db.QueryRow(`SELECT project_id FROM issues WHERE id=$1`, issueID).Scan(&pid); err != nil {
 		return 0, ErrNotFound
 	}
 	return pid, nil
@@ -345,9 +362,9 @@ func (s *Store) Live(projectID int64, window int) (*LiveStatus, error) {
 	if window <= 0 {
 		window = 60
 	}
-	since := time.Now().UTC().Add(-time.Duration(window) * time.Second).Format(time.RFC3339Nano)
+	since := time.Now().UTC().Add(-time.Duration(window) * time.Second)
 	rows, err := s.db.Query(`SELECT id, user_id, user_json, ip, browser, platform, current_route, last_seen_at, started_at, visitor_key FROM sessions
-		WHERE project_id=? AND last_seen_at>=? AND ended_at IS NULL ORDER BY last_seen_at DESC LIMIT 500`, projectID, since)
+		WHERE project_id=$1 AND last_seen_at>=$2 AND ended_at IS NULL ORDER BY last_seen_at DESC LIMIT 500`, projectID, since)
 	if err != nil {
 		return nil, err
 	}
@@ -358,7 +375,7 @@ func (s *Store) Live(projectID int64, window int) (*LiveStatus, error) {
 	for rows.Next() {
 		var v LiveViewer
 		var userJSON, vk string
-		if err := rows.Scan(&v.SessionID, &v.UserID, &userJSON, &v.IP, &v.Browser, &v.Platform, &v.Route, &v.LastSeen, &v.StartedAt, &vk); err != nil {
+		if err := rows.Scan(&v.SessionID, &v.UserID, &userJSON, &v.IP, &v.Browser, &v.Platform, &v.Route, tsCol{&v.LastSeen}, tsCol{&v.StartedAt}, &vk); err != nil {
 			return nil, err
 		}
 		var u struct {

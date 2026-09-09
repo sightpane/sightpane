@@ -7,7 +7,7 @@
 //
 // Frames are the only large, write-once, read-rarely data this service holds: a
 // recorded session is tens to hundreds of PNGs, and they are read back only when
-// somebody opens the player. Keeping them out of SQLite keeps the database small
+// somebody opens the player. Keeping them out of the database keeps it small
 // enough to copy around, and putting them behind an interface means the same
 // backend can run from a single container's disk or from a Ceph cluster without
 // the ingest path knowing which.

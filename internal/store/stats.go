@@ -6,6 +6,7 @@
 package store
 
 import (
+	"strconv"
 	"time"
 )
 
@@ -48,9 +49,12 @@ func (s *Store) Stats(projectID int64, days int) (*ProjectStats, error) {
 		days = 14
 	}
 	now := time.Now().UTC()
-	since := now.AddDate(0, 0, -(days - 1)).Truncate(24 * time.Hour).Format(time.RFC3339Nano)
+	since := now.AddDate(0, 0, -(days - 1)).Truncate(24 * time.Hour)
 	st := &ProjectStats{Days: days, Platforms: []NameCount{}, Releases: []NameCount{}, TopIssues: []Issue{}, TopEvents: []NameCount{}}
-	row := s.db.QueryRow(`SELECT COUNT(*), COUNT(DISTINCT visitor_key), COALESCE(SUM(frame_count),0), COALESCE(SUM(CASE WHEN error_count=0 THEN 1 ELSE 0 END),0) FROM sessions WHERE project_id=? AND started_at>=?`, projectID, since)
+	// Every query below takes the same two parameters in the same order, which
+	// is what lets fill and nameCounts stay one-liners.
+	from := since
+	row := s.db.QueryRow(`SELECT COUNT(*), COUNT(DISTINCT visitor_key), COALESCE(SUM(frame_count),0), COALESCE(SUM(CASE WHEN error_count=0 THEN 1 ELSE 0 END),0) FROM sessions WHERE project_id=$1 AND started_at>=$2`, projectID, from)
 	var crashFreeSessions int
 	if err := row.Scan(&st.Sessions, &st.Users, &st.Frames, &crashFreeSessions); err != nil {
 		return nil, err
@@ -58,13 +62,13 @@ func (s *Store) Stats(projectID int64, days int) (*ProjectStats, error) {
 	if st.Sessions > 0 {
 		st.CrashFree = float64(crashFreeSessions) / float64(st.Sessions)
 	}
-	if err := s.db.QueryRow(`SELECT COUNT(*) FROM items WHERE project_id=? AND type='error' AND ts>=?`, projectID, since).Scan(&st.Errors); err != nil {
+	if err := s.db.QueryRow(itemTotal("error"), projectID, from).Scan(&st.Errors); err != nil {
 		return nil, err
 	}
-	if err := s.db.QueryRow(`SELECT COUNT(*) FROM items WHERE project_id=? AND type='event' AND ts>=?`, projectID, since).Scan(&st.Events); err != nil {
+	if err := s.db.QueryRow(itemTotal("event"), projectID, from).Scan(&st.Events); err != nil {
 		return nil, err
 	}
-	if err := s.db.QueryRow(`SELECT COUNT(*) FROM issues WHERE project_id=? AND resolved=0`, projectID).Scan(&st.OpenIssues); err != nil {
+	if err := s.db.QueryRow(`SELECT COUNT(*) FROM issues WHERE project_id=$1 AND NOT resolved`, projectID).Scan(&st.OpenIssues); err != nil {
 		return nil, err
 	}
 	// Per-day series
@@ -76,7 +80,7 @@ func (s *Store) Stats(projectID int64, days int) (*ProjectStats, error) {
 		st.Daily = append(st.Daily, *ds)
 	}
 	fill := func(q string, set func(ds *DayStat, n int)) error {
-		rows, err := s.db.Query(q, projectID, since)
+		rows, err := s.db.Query(q, projectID, from)
 		if err != nil {
 			return err
 		}
@@ -95,20 +99,24 @@ func (s *Store) Stats(projectID int64, days int) (*ProjectStats, error) {
 		}
 		return rows.Err()
 	}
-	if err := fill(`SELECT substr(started_at,1,10), COUNT(*) FROM sessions WHERE project_id=? AND started_at>=? GROUP BY 1`, func(d *DayStat, n int) { d.Sessions = n }); err != nil {
+	// Sessions and visitors come from the sessions table on both databases: it
+	// is small, and a distinct count of visitor keys is not something a
+	// continuous aggregate can hold.
+	day := utcDay("started_at")
+	if err := fill(`SELECT `+day+`, COUNT(*) FROM sessions WHERE project_id=$1 AND started_at>=$2 GROUP BY 1`, func(d *DayStat, n int) { d.Sessions = n }); err != nil {
 		return nil, err
 	}
-	if err := fill(`SELECT substr(started_at,1,10), COUNT(DISTINCT visitor_key) FROM sessions WHERE project_id=? AND started_at>=? GROUP BY 1`, func(d *DayStat, n int) { d.Users = n }); err != nil {
+	if err := fill(`SELECT `+day+`, COUNT(DISTINCT visitor_key) FROM sessions WHERE project_id=$1 AND started_at>=$2 GROUP BY 1`, func(d *DayStat, n int) { d.Users = n }); err != nil {
 		return nil, err
 	}
-	if err := fill(`SELECT substr(ts,1,10), COUNT(*) FROM items WHERE project_id=? AND type='error' AND ts>=? GROUP BY 1`, func(d *DayStat, n int) { d.Errors = n }); err != nil {
+	if err := fill(itemsPerDay("error"), func(d *DayStat, n int) { d.Errors = n }); err != nil {
 		return nil, err
 	}
-	if err := fill(`SELECT substr(ts,1,10), COUNT(*) FROM items WHERE project_id=? AND type='event' AND ts>=? GROUP BY 1`, func(d *DayStat, n int) { d.Events = n }); err != nil {
+	if err := fill(itemsPerDay("event"), func(d *DayStat, n int) { d.Events = n }); err != nil {
 		return nil, err
 	}
 	nameCounts := func(q string) ([]NameCount, error) {
-		rows, err := s.db.Query(q, projectID, since)
+		rows, err := s.db.Query(q, projectID, from)
 		if err != nil {
 			return nil, err
 		}
@@ -124,13 +132,13 @@ func (s *Store) Stats(projectID int64, days int) (*ProjectStats, error) {
 		return out, rows.Err()
 	}
 	var err error
-	if st.Platforms, err = nameCounts(`SELECT COALESCE(NULLIF(platform,''),'?'), COUNT(*) FROM sessions WHERE project_id=? AND started_at>=? GROUP BY 1 ORDER BY 2 DESC`); err != nil {
+	if st.Platforms, err = nameCounts(`SELECT COALESCE(NULLIF(platform,''),'?'), COUNT(*) FROM sessions WHERE project_id=$1 AND started_at>=$2 GROUP BY 1 ORDER BY 2 DESC`); err != nil {
 		return nil, err
 	}
-	if st.Releases, err = nameCounts(`SELECT COALESCE(NULLIF(release,''),'?'), COUNT(*) FROM sessions WHERE project_id=? AND started_at>=? GROUP BY 1 ORDER BY 2 DESC LIMIT 8`); err != nil {
+	if st.Releases, err = nameCounts(`SELECT COALESCE(NULLIF(release,''),'?'), COUNT(*) FROM sessions WHERE project_id=$1 AND started_at>=$2 GROUP BY 1 ORDER BY 2 DESC LIMIT 8`); err != nil {
 		return nil, err
 	}
-	if st.TopEvents, err = nameCounts(`SELECT name, COUNT(*) FROM items WHERE project_id=? AND type='event' AND ts>=? GROUP BY 1 ORDER BY 2 DESC LIMIT 8`); err != nil {
+	if st.TopEvents, err = nameCounts(topItemNames("event", 8)); err != nil {
 		return nil, err
 	}
 	issues, err := s.ListIssues(projectID, false)
@@ -143,6 +151,33 @@ func (s *Store) Stats(projectID int64, days int) (*ProjectStats, error) {
 	}
 	st.TopIssues = issues
 	return st, nil
+}
+
+// --- Daily counts ---
+//
+// Three of the queries above count items by day, and read items_daily rather
+// than items: a continuous aggregate over a one-day time_bucket where
+// TimescaleDB is installed, an ordinary view over the same grouping where it is
+// not. The dashboard polls stats once a second, so this is the read that most
+// wants the materialisation.
+//
+// [kind] is an item type the package chooses itself ("error", "event"), never
+// anything that came in over the wire.
+
+// itemTotal counts items of one type since a day: SELECT count.
+func itemTotal(kind string) string {
+	return `SELECT COALESCE(SUM(n),0) FROM items_daily WHERE project_id=$1 AND type='` + kind + `' AND day>=$2`
+}
+
+// itemsPerDay counts items of one type per day: SELECT day, count.
+func itemsPerDay(kind string) string {
+	return `SELECT ` + utcDay("day") + `, SUM(n) FROM items_daily WHERE project_id=$1 AND type='` + kind + `' AND day>=$2 GROUP BY 1`
+}
+
+// topItemNames counts items of one type by name, biggest first: SELECT name, count.
+func topItemNames(kind string, limit int) string {
+	return `SELECT name, SUM(n) FROM items_daily WHERE project_id=$1 AND type='` + kind +
+		`' AND day>=$2 GROUP BY 1 ORDER BY 2 DESC LIMIT ` + strconv.Itoa(limit)
 }
 
 func sortIssuesByCount(is []Issue) {

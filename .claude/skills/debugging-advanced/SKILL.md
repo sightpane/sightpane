@@ -1,6 +1,6 @@
 ---
 name: debugging-advanced
-description: Act as an expert senior debugging engineer for sightpane/sightpane — the Go backend (Fiber v3, SQLite, the ingest API) and the envelope flow it sits on. Trigger whenever the user asks to "debug", "figure out why this is failing", "neden çalışmıyor", "sessions don't show up", "monitor the request and logs", or presents an expected behaviour and an actual failure. Investigate, find the root cause, fix, and explain.
+description: Act as an expert senior debugging engineer for sightpane/sightpane — the Go backend (Fiber v3, TimescaleDB, the ingest API) and the envelope flow it sits on. Trigger whenever the user asks to "debug", "figure out why this is failing", "neden çalışmıyor", "sessions don't show up", "monitor the request and logs", or presents an expected behaviour and an actual failure. Investigate, find the root cause, fix, and explain.
 ---
 
 > **This repository is one of three.** [sightpane/sightpane](https://github.com/sightpane/sightpane)
@@ -34,7 +34,7 @@ which container sees which address.
 | SDK in the app | Browser/console log with `debug: true`: `sightpane: initialised …`, `sent N items`, `send failed`. No "başlatıldı" line ⇒ `Sightpane.init` never ran (usually `HOG_API_KEY` empty because `--dart-define-from-file` was not applied; **hot restart does not refresh dart-defines**). |
 | Wire | Browser Network tab: `POST /api/v1/envelope` status. 401 = key; CORS preflight `OPTIONS` = 204; 400 = `session.id` missing / bad JSON; 413 = envelope > 32 MB. |
 | Backend | `/tmp/sightpane.log` (or container logs): `ingest: …` lines only on errors; startup line shows data dir, project, key, `proxy_protocol=`. `curl localhost:8790/api/v1/health`. |
-| Data | `sightpane.db` (SQLite) — read with a scratch Go test via `OpenStore` on a **copy**, never the live file while the server runs. Frames under `frames/<session>/<seq>.png`. |
+| Data | TimescaleDB (`SIGHTPANE_DB`) — read with `psql`, and never write to a live one while debugging. Frames under `frames/<session>/<seq>.png`. |
 | Dashboard | Riverpod providers in `frontend/lib/core/providers.dart`; every read goes through `HttpSightpaneApi` with the token from `TokenStore`; API URL = `SIGHTPANE_API_URL` or same-origin. |
 | Proxies | `clientIP` order (Cloudflare → `Forwarded` → XFF → `X-Real-IP` → RemoteAddr); layer-4 Caddy needs `proxy_protocol v2` + `SIGHTPANE_PROXY_PROTOCOL=1`; Docker bridge shows 172.x. |
 | Recording | LiveKit egress ⇐ backend `recording.Recorder` log lines; `go run ./tool/lkcheck` lists participants and active egress. |
@@ -54,7 +54,7 @@ which container sees which address.
 
 2. **Monitor and investigate.**
    - **Known limits first.** The READMEs list deliberate limits (no disk queue, last batch
-     lost on tab close, frame replay is image-only, SQLite single node). If the symptom is
+     lost on tab close, frame replay is image-only). If the symptom is
      one of them, say so instead of deep-diving — unless it regressed.
    - **Logs**, then **execution flow** (`grep -rn` the symbol across `package/lib`,
      `backend/*.go`, `frontend/lib`), then **state** (rows, files on disk, response JSON).

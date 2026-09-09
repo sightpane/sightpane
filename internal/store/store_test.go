@@ -6,8 +6,6 @@
 package store
 
 import (
-	"database/sql"
-	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -58,48 +56,5 @@ func TestFingerprint(t *testing.T) {
 	g, _ := Fingerprint("E", "m 2", "#0 y (package:flutter/src/b.dart:2:2)")
 	if f != g {
 		t.Fatalf("framework-only stacks should group by message")
-	}
-}
-
-// An older database is called hog.db and has no users.locale column. Open() has
-// to find it by its old name and migrate() has to add the column through the
-// ALTER list — adding a new column to CREATE TABLE alone would break every
-// existing install, and only this test would notice.
-func TestMigrateAddsLocaleToExistingDatabase(t *testing.T) {
-	dir := t.TempDir()
-	// Pre-0a schema: no locale column.
-	old, err := sql.Open("sqlite", filepath.Join(dir, "hog.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := old.Exec(`CREATE TABLE users (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  email TEXT NOT NULL UNIQUE,
-  name TEXT NOT NULL DEFAULT '',
-  password_hash TEXT NOT NULL,
-  created_at TEXT NOT NULL
-);
-INSERT INTO users(email, name, password_hash, created_at) VALUES('eski@x.io','Eski','pbkdf2$1$a$b','2026-01-01T00:00:00Z');`); err != nil {
-		t.Fatal(err)
-	}
-	old.Close()
-
-	st, err := Open(dir, nil)
-	if err != nil {
-		t.Fatalf("opening an old database: %v", err)
-	}
-	defer st.Close()
-	u, _, err := st.UserByEmail("eski@x.io")
-	if err != nil {
-		t.Fatalf("reading an existing user: %v", err)
-	}
-	if u.Locale != "" {
-		t.Fatalf("an existing row must start with no language: %q", u.Locale)
-	}
-	if err := st.SetLocale(u.ID, "en"); err != nil {
-		t.Fatalf("writing the language: %v", err)
-	}
-	if again, _ := st.UserByID(u.ID); again.Locale != "en" {
-		t.Fatalf("the language did not persist: %+v", again)
 	}
 }

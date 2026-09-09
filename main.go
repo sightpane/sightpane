@@ -10,8 +10,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 // Command sightpane receives errors, events, breadcrumbs and replay frames from
-// applications, keeps them in SQLite plus files on disk, and serves the dashboard
-// and its API.
+// applications, keeps them in Postgres plus files on disk, and serves the
+// dashboard and its API.
 //
 // This file is wiring only: configuration, storage, the first-run seed, the
 // listener and the HTTP app. The parts live in internal/{config,store,server,netx}.
@@ -60,7 +60,12 @@ func main() {
 		log.Fatalf("frames: %v", err)
 	}
 
-	st, err := store.Open(cfg.DataDir, frames)
+	st, err := store.Open(store.Options{
+		DSN:           cfg.DB,
+		DataDir:       cfg.DataDir,
+		Frames:        frames,
+		RetentionDays: cfg.RetentionDays,
+	})
 	if err != nil {
 		log.Fatalf("store: %v", err)
 	}
@@ -81,13 +86,13 @@ func main() {
 	embedded, _ := fs.Sub(uiFS, "ui")
 	app := server.New(st, cfg.UIDir, embedded)
 
-	log.Printf("sightpane listening on %s (data %s, frames %s, project %q key %q, admin %s, proxy_protocol=%v)",
-		cfg.Addr, cfg.DataDir, st.Frames(), cfg.DefaultProject, cfg.DefaultKey, cfg.AdminEmail, cfg.ProxyProtocol)
+	log.Printf("sightpane listening on %s (db %s, data %s, frames %s, project %q key %q, admin %s, proxy_protocol=%v)",
+		cfg.Addr, st.Driver(), cfg.DataDir, st.Frames(), cfg.DefaultProject, cfg.DefaultKey, cfg.AdminEmail, cfg.ProxyProtocol)
 
 	// Serve from another goroutine so the signal handler below can shut the app
-	// down instead of the process being killed mid-write. SQLite in WAL mode
-	// survives a hard kill, but an ingest transaction that was about to commit
-	// does not, and `defer st.Close()` would never run.
+	// down instead of the process being killed mid-request. Postgres survives a
+	// hard kill, but an in-flight envelope does not, and `defer st.Close()` would
+	// never run.
 	serveErr := make(chan error, 1)
 	go func() {
 		serveErr <- app.Listener(ln, fiber.ListenConfig{DisableStartupMessage: true})

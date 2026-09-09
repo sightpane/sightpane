@@ -1,6 +1,6 @@
 ---
 name: code-auditor
-description: Act as an expert Staff Engineer to deeply audit the Go backend (Fiber v3, SQLite, the ingest API) for bugs, logic errors, concurrency and lifecycle issues, code smells and anti-patterns. Trigger this when the user asks to "review my code", "find bugs", "identify code smells", "audit this", or "check for best practices". It categorizes findings by severity and proposes structured solutions.
+description: Act as an expert Staff Engineer to deeply audit the Go backend (Fiber v3, TimescaleDB, the ingest API) for bugs, logic errors, concurrency and lifecycle issues, code smells and anti-patterns. Trigger this when the user asks to "review my code", "find bugs", "identify code smells", "audit this", or "check for best practices". It categorizes findings by severity and proposes structured solutions.
 ---
 
 > **This repository is one of three.** [sightpane/sightpane](https://github.com/sightpane/sightpane)
@@ -19,7 +19,7 @@ You are an expert Staff Engineer performing a deep, meticulous code audit of sig
 | Part | Path | Stack | Tests |
 |---|---|---|---|
 | SDK | `package/` (`sightpane`) | Dart/Flutter, only `http` + `clock` + `web` deps | `cd package && flutter test` |
-| Backend | `backend/` (`sightpane`) | Go, `net/http` + `modernc.org/sqlite`, no cgo | `go test ./...` |
+| Backend | `backend/` (`sightpane`) | Go, Fiber v3 + `pgx` against TimescaleDB, no cgo | `go test ./...` (needs Docker) |
 | Dashboard | `frontend/` (`sightpane_dashboard`) | Flutter web, shadcn_flutter, Riverpod 3, go_router | `cd frontend && flutter test` |
 
 The wire contract between them is the **envelope** (`POST /api/v1/envelope`, `X-Sightpane-Key`): items of type `breadcrumb`, `event`, `error`, `frame`, `pointer`, `heartbeat`, `session_end`. A change on one side of that contract is a finding on the other side until proven compatible (`backend/api_test.go` and `package/test/models_test.dart` pin it).
@@ -31,7 +31,7 @@ The wire contract between them is the **envelope** (`POST /api/v1/envelope`, `X-
 3. **No unnecessary changes.** If the code is fine, say so. Do not invent problems.
 4. **Actionable solutions.** Every finding names the file, the line, and the fix.
 5. **Severity tiers.** Categorize strictly.
-6. **Known limitations are not findings.** The READMEs list deliberate limits (`package/README.md` "Sınırlar", `README.md`, `frontend/README.md`): no persistent disk queue in the SDK, frame-based replay has no text search, single-node SQLite, `SightpaneMask` masks only the wrapped widget's rect, the last batch may be lost on web tab close. Flag one only if it has regressed or the README claim is now false.
+6. **Known limitations are not findings.** The READMEs list deliberate limits (`package/README.md` "Sınırlar", `README.md`, `frontend/README.md`): no persistent disk queue in the SDK, frame-based replay has no text search, no cross-replica alert state, `SightpaneMask` masks only the wrapped widget's rect, the last batch may be lost on web tab close. Flag one only if it has regressed or the README claim is now false.
 
 ## Output Format
 
@@ -67,7 +67,7 @@ The wire contract between them is the **envelope** (`POST /api/v1/envelope`, `X-
 - **Ingest is one transaction.** `Ingest` must roll back on any item error; `heartbeat` updates the session row but writes no item row; `pointer` items are stored, `session_end` sets `ended_at`.
 - **Auth boundaries.** SDK endpoints take `X-Sightpane-Key`; every read endpoint goes through `auth` + `project(...)` membership; `owner` role for destructive actions; session/issue detail endpoints authorize through their project (`SessionProject`, `IssueProject`).
 - **IP resolution order.** `clientIP`: Cloudflare headers → `Forwarded` → `X-Forwarded-For` (first) → `X-Real-IP` → `RemoteAddr`; PROXY protocol only when `SIGHTPANE_PROXY_PROTOCOL=1`, honored only from `SIGHTPANE_TRUSTED_PROXIES` (IGNORE elsewhere, never SKIP).
-- **SQLite specifics.** Single writer (`SetMaxOpenConns(1)`), WAL, `busy_timeout`; long-running statements block ingest. Watch for N+1 queries in `Stats`/`Live` and unbounded `LIMIT`-less scans.
+- **Database specifics.** Postgres/TimescaleDB, pool of 16. `items` is a hypertable, so a query without a `ts` bound scans every chunk — flag one. The daily counts read `items_daily`, not `items`. Watch for N+1 queries in `Stats`/`Live` and unbounded `LIMIT`-less scans.
 - **Fingerprinting.** `Fingerprint` normalizes line/column numbers and skips `package:flutter/`, `package:sightpane/`, `(dart:` frames; message-based fallback normalizes digits. Changing it regroups every existing issue — call that out.
 - **Frames on disk.** `frames/<session>/<seq>.png` must be deleted with the project (`DeleteProject`); path segments come from validated ids only.
 - **Startup.** `main.go` seeds admin + default project; `SIGHTPANE_UI_DIR` SPA handler must not serve files outside the dir.

@@ -122,22 +122,22 @@ func (s *Store) CreateUser(email, name, password string) (*User, error) {
 	if err != nil {
 		return nil, err
 	}
-	now := time.Now().UTC().Format(time.RFC3339Nano)
-	res, err := s.db.Exec(`INSERT INTO users(email, name, password_hash, created_at) VALUES(?,?,?,?)`, email, strings.TrimSpace(name), h, now)
-	if err != nil {
-		if strings.Contains(err.Error(), "UNIQUE") {
+	now := time.Now().UTC()
+	var id int64
+	if err := s.db.QueryRow(`INSERT INTO users(email, name, password_hash, created_at) VALUES($1,$2,$3,$4) RETURNING id`,
+		email, strings.TrimSpace(name), h, now).Scan(&id); err != nil {
+		if isUniqueViolation(err) {
 			return nil, ErrEmailTaken
 		}
 		return nil, err
 	}
-	id, _ := res.LastInsertId()
-	return &User{ID: id, Email: email, Name: strings.TrimSpace(name), CreatedAt: now}, nil
+	return &User{ID: id, Email: email, Name: strings.TrimSpace(name), CreatedAt: now.Format(time.RFC3339Nano)}, nil
 }
 
 func (s *Store) UserByEmail(email string) (*User, string, error) {
 	var u User
 	var hash string
-	err := s.db.QueryRow(`SELECT id, email, name, locale, password_hash, created_at FROM users WHERE email=?`, strings.ToLower(strings.TrimSpace(email))).Scan(&u.ID, &u.Email, &u.Name, &u.Locale, &hash, &u.CreatedAt)
+	err := s.db.QueryRow(`SELECT id, email, name, locale, password_hash, created_at FROM users WHERE email=$1`, strings.ToLower(strings.TrimSpace(email))).Scan(&u.ID, &u.Email, &u.Name, &u.Locale, &hash, tsCol{&u.CreatedAt})
 	if err != nil {
 		return nil, "", ErrNotFound
 	}
@@ -146,7 +146,7 @@ func (s *Store) UserByEmail(email string) (*User, string, error) {
 
 func (s *Store) UserByID(id int64) (*User, error) {
 	var u User
-	err := s.db.QueryRow(`SELECT id, email, name, locale, created_at FROM users WHERE id=?`, id).Scan(&u.ID, &u.Email, &u.Name, &u.Locale, &u.CreatedAt)
+	err := s.db.QueryRow(`SELECT id, email, name, locale, created_at FROM users WHERE id=$1`, id).Scan(&u.ID, &u.Email, &u.Name, &u.Locale, tsCol{&u.CreatedAt})
 	if err != nil {
 		return nil, ErrNotFound
 	}
@@ -168,25 +168,23 @@ func (s *Store) Login(email, password string) (string, *User, error) {
 func (s *Store) IssueToken(userID int64) (string, error) {
 	plain, hash := newToken()
 	now := time.Now().UTC()
-	_, err := s.db.Exec(`INSERT INTO auth_tokens(token_hash, user_id, created_at, expires_at) VALUES(?,?,?,?)`, hash, userID, now.Format(time.RFC3339Nano), now.Add(tokenTTL).Format(time.RFC3339Nano))
+	_, err := s.db.Exec(`INSERT INTO auth_tokens(token_hash, user_id, created_at, expires_at) VALUES($1,$2,$3,$4)`,
+		hash, userID, now, now.Add(tokenTTL))
 	return plain, err
 }
 
 func (s *Store) UserByToken(token string) (*User, error) {
 	var userID int64
-	var expires string
-	err := s.db.QueryRow(`SELECT user_id, expires_at FROM auth_tokens WHERE token_hash=?`, hashToken(token)).Scan(&userID, &expires)
-	if err != nil {
-		return nil, ErrNotFound
-	}
-	if exp, err := time.Parse(time.RFC3339Nano, expires); err != nil || time.Now().UTC().After(exp) {
+	var expires time.Time
+	err := s.db.QueryRow(`SELECT user_id, expires_at FROM auth_tokens WHERE token_hash=$1`, hashToken(token)).Scan(&userID, &expires)
+	if err != nil || time.Now().After(expires) {
 		return nil, ErrNotFound
 	}
 	return s.UserByID(userID)
 }
 
 func (s *Store) RevokeToken(token string) error {
-	_, err := s.db.Exec(`DELETE FROM auth_tokens WHERE token_hash=?`, hashToken(token))
+	_, err := s.db.Exec(`DELETE FROM auth_tokens WHERE token_hash=$1`, hashToken(token))
 	return err
 }
 
@@ -198,7 +196,7 @@ func (s *Store) SetLocale(userID int64, locale string) error {
 	if locale != "" && !localeSupported(locale) {
 		return ErrBadLocale
 	}
-	_, err := s.db.Exec(`UPDATE users SET locale=? WHERE id=?`, locale, userID)
+	_, err := s.db.Exec(`UPDATE users SET locale=$1 WHERE id=$2`, locale, userID)
 	return err
 }
 
@@ -212,12 +210,12 @@ type Member struct {
 }
 
 func (s *Store) AddMember(projectID, userID int64, role string) error {
-	_, err := s.db.Exec(`INSERT INTO project_members(project_id, user_id, role) VALUES(?,?,?) ON CONFLICT(project_id, user_id) DO UPDATE SET role=excluded.role`, projectID, userID, role)
+	_, err := s.db.Exec(`INSERT INTO project_members(project_id, user_id, role) VALUES($1,$2,$3) ON CONFLICT(project_id, user_id) DO UPDATE SET role=excluded.role`, projectID, userID, role)
 	return err
 }
 
 func (s *Store) RemoveMember(projectID, userID int64) error {
-	_, err := s.db.Exec(`DELETE FROM project_members WHERE project_id=? AND user_id=?`, projectID, userID)
+	_, err := s.db.Exec(`DELETE FROM project_members WHERE project_id=$1 AND user_id=$2`, projectID, userID)
 	return err
 }
 
@@ -225,7 +223,7 @@ func (s *Store) RemoveMember(projectID, userID int64) error {
 // a caller can treat "not a member" and "no such project" as the same answer.
 func (s *Store) MemberRole(projectID, userID int64) (string, error) {
 	var role string
-	err := s.db.QueryRow(`SELECT role FROM project_members WHERE project_id=? AND user_id=?`, projectID, userID).Scan(&role)
+	err := s.db.QueryRow(`SELECT role FROM project_members WHERE project_id=$1 AND user_id=$2`, projectID, userID).Scan(&role)
 	if err != nil {
 		return "", nil
 	}
@@ -233,7 +231,7 @@ func (s *Store) MemberRole(projectID, userID int64) (string, error) {
 }
 
 func (s *Store) ListMembers(projectID int64) ([]Member, error) {
-	rows, err := s.db.Query(`SELECT u.id, u.email, u.name, m.role FROM project_members m JOIN users u ON u.id=m.user_id WHERE m.project_id=? ORDER BY m.role, u.email`, projectID)
+	rows, err := s.db.Query(`SELECT u.id, u.email, u.name, m.role FROM project_members m JOIN users u ON u.id=m.user_id WHERE m.project_id=$1 ORDER BY m.role, u.email`, projectID)
 	if err != nil {
 		return nil, err
 	}

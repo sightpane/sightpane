@@ -24,7 +24,7 @@ tests from the spec, not from the code.
 | Read it | Don't read it |
 |---|---|
 | The envelope contract (`package/lib/src/models.dart` ↔ `internal/store/store.go` `itemHead`) | The function body you're about to change |
-| The SQLite schema in `migrate()` and the ALTER list | The existing tests for that same function (they encode today's behaviour) |
+| The schema, in `internal/store/migrations/*.sql` | `internal/store/schema_test.go` and the existing store tests (they encode today's behaviour) |
 | The fakes: `FakeTransport`, `FakeApi`, `newTestServer` | The implementation you are about to replace |
 | Sibling modules for conventions | |
 
@@ -38,7 +38,7 @@ line of it, and say in your summary that you read implementation for the gap ana
 | Part | Command | Harness |
 |---|---|---|
 | SDK | `cd package && flutter test` | `test/fake_transport.dart` (`FakeTransport`), `fakeAsync` for the queue, `tester.runAsync` for `toImage`/PNG decode, `Sightpane.init(... transport: t)` |
-| Backend | `go test ./...` | `newTestServer(t)` (temp dir + SQLite + owner token), `httptest`, raw sockets for PROXY protocol |
+| Backend | `go test ./...` | `newTestServer(t)` (a schema of its own in the container `internal/testdb` started + owner token), `httptest`, raw sockets for PROXY protocol |
 | Dashboard | `cd frontend && flutter test` | `test/helpers/test_app.dart`: `FakeApi`, `pumpApp` (one `ProviderContainer` for router and pages), `setUpLoggedIn` |
 
 ## Workflow
@@ -103,7 +103,7 @@ the other side accepts it. In this repo the boundaries that need at least one re
 - **SDK → backend.** `FakeTransport` proves the envelope was built; only a real `POST`
   proves the backend accepts it. `package/tool/smoke_send.dart` sends a real envelope
   to a running backend — use it (or `curl`) once per contract change.
-- **SQLite.** `newTestServer` opens a real temp database, so query tests are real. Use
+- **The database.** `newTestServer` opens a real schema in a real TimescaleDB, so query tests are real. Use
   it for every new query; don't fake `Store`.
 - **Sockets and proxies.** PROXY protocol policies (`USE`/`IGNORE`/`REQUIRE`) only
   showed their real behaviour on a real listener (`proxyproto_test.go`); the library's
@@ -168,7 +168,7 @@ so the next reader knows what they'd be reintroducing:
 ## Report honestly
 
 State plainly: which tests were written before the implementation and which after;
-whether you observed RED; what is verified against a real backend/SQLite/socket and
+whether you observed RED; what is verified against a real backend/database/socket and
 what is only faked; what you did **not** cover.
 
 ---

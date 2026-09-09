@@ -17,6 +17,7 @@ import (
 
 	"sightpane/internal/apierr"
 	"sightpane/internal/store"
+	"sightpane/internal/testdb"
 )
 
 const tinyPNG = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII="
@@ -28,11 +29,7 @@ var userTok string
 
 func newTestServer(t *testing.T) (*fiber.App, *store.Store) {
 	t.Helper()
-	st, err := store.Open(t.TempDir(), nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { st.Close() })
+	st := testStore(t)
 	u, err := st.CreateUser("owner@x.io", "Owner", "secret1")
 	if err != nil {
 		t.Fatal(err)
@@ -43,6 +40,20 @@ func newTestServer(t *testing.T) (*fiber.App, *store.Store) {
 	userTok, _ = st.IssueToken(u.ID)
 	return New(st, "", nil), st
 }
+
+// testStore opens the database one test runs against: a schema of its own inside
+// the TimescaleDB that testdb started for this binary.
+func testStore(t *testing.T) *store.Store {
+	t.Helper()
+	st, err := store.Open(store.Options{DSN: testdb.DSN(t), DataDir: t.TempDir()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { st.Close() })
+	return st
+}
+
+func TestMain(m *testing.M) { os.Exit(testdb.Main(m)) }
 
 // resp exposes the few things the tests need from a response, with the same
 // shape httptest.ResponseRecorder had, so the assertions below did not change
@@ -583,7 +594,7 @@ func TestDashboardIsServedAsASinglePageApp(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "main.dart.js"), []byte("console.log(1)"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	st, err := store.Open(t.TempDir(), nil)
+	st, err := store.Open(store.Options{DSN: testdb.DSN(t), DataDir: t.TempDir()})
 	if err != nil {
 		t.Fatal(err)
 	}

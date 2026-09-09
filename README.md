@@ -4,8 +4,8 @@ Self-hosted **error tracking, product analytics and session replay** — Sentry 
 PostHog in one binary, for apps on any platform.
 
 This repository is the **backend**: the Go service that receives envelopes from
-the SDKs, keeps them in SQLite plus a frame store, manages users, projects and
-membership, serves the statistics API, and serves the dashboard.
+the SDKs, keeps them in TimescaleDB plus a frame store, manages users, projects
+and membership, serves the statistics API, and serves the dashboard.
 
 | Repository | What it is |
 |---|---|
@@ -20,20 +20,50 @@ three. It is specified under "API" below.
 ---
 
 The Go service that receives envelopes from the `sightpane` SDK, keeps them in
-SQLite plus files on disk, manages users / projects / membership and serves
-statistics. One binary, no external services. Built on
-[Fiber v3](https://gofiber.io) over fasthttp, with `modernc.org/sqlite` so cgo is
-not needed. The dashboard lives in `sightpane/frontend`; its web build is served
-from here through `SIGHTPANE_UI_DIR`.
+Postgres plus a frame store, manages users / projects / membership and serves
+statistics. One binary and one database. Built on
+[Fiber v3](https://gofiber.io) over fasthttp, with `pgx` so cgo is not needed. The
+dashboard lives in `sightpane/frontend`; its web build is served from here through
+`SIGHTPANE_UI_DIR`.
 
 ```bash
-go build -o /tmp/sightpane . && SIGHTPANE_DEFAULT_PROJECT="Casino CRM" SIGHTPANE_DEFAULT_KEY=dev SIGHTPANE_UI_DIR=../frontend/build/web /tmp/sightpane
+docker compose up -d timescaledb
+go build -o /tmp/sightpane . && \
+  SIGHTPANE_DB=postgres://sightpane:sightpane@127.0.0.1:5432/sightpane?sslmode=disable \
+  SIGHTPANE_DEFAULT_PROJECT="Casino CRM" SIGHTPANE_DEFAULT_KEY=dev \
+  SIGHTPANE_UI_DIR=../frontend/build/web /tmp/sightpane
 ```
+
+### The database
+
+**TimescaleDB**, which is Postgres with an extension. `items` — every event,
+breadcrumb, error and pointer trail — is the table that grows without bound and is
+only ever read by time, so it is a hypertable: one chunk per day, chunk exclusion
+instead of a full scan, compression after a week, and expiry as a chunk drop
+rather than a `DELETE`. The daily counts behind the dashboard come from
+`items_daily`, a continuous aggregate refreshed hourly with real-time aggregation
+on, so what was just ingested is in the chart immediately. With a million items,
+`GET /projects/{id}/stats?days=14` answers in ~10 ms and `/live` in ~1 ms.
+
+`sessions`, `issues`, `frames`, `users` and `projects` stay ordinary tables:
+ingest upserts a session by its id alone, which a hypertable's partitioning column
+would break.
+
+A plain Postgres without the extension also works — `items_daily` is then an
+ordinary view and everything reads the same — but nothing compresses and nothing
+expires on its own. The startup log says `db timescaledb` or `db postgres`.
+
+The schema is a set of numbered files under
+[`internal/store/migrations/`](internal/store/migrations), applied in order at
+startup and recorded in `schema_migrations`. A new column is a new file; there is
+no `ALTER` list to keep in step any more.
 
 | Environment variable | Default | Meaning |
 |---|---|---|
 | `SIGHTPANE_ADDR` | `:8790` | listen address |
-| `SIGHTPANE_DATA` | `./data` | `sightpane.db` + `frames/<session>/<seq>.png` |
+| `SIGHTPANE_DB` | — | **required**: `postgres://user:pw@host:5432/sightpane?sslmode=disable`, or a libpq key/value string |
+| `SIGHTPANE_RETENTION_DAYS` | `90` | items older than this are dropped by a TimescaleDB retention policy; `0` keeps everything |
+| `SIGHTPANE_DATA` | `./data` | `frames/<session>/<seq>.png`, when the frames are on disk |
 | `SIGHTPANE_ADMIN_EMAIL` / `SIGHTPANE_ADMIN_PASSWORD` | `admin@sightpane.local` / `admin123` | admin created on first start (if missing) |
 | `SIGHTPANE_DEFAULT_PROJECT` / `SIGHTPANE_DEFAULT_KEY` | `default` / `dev` | project guaranteed to exist on start; the admin becomes its owner |
 | `SIGHTPANE_UI_DIR` | empty | a Flutter web build; empty serves a small placeholder page |
@@ -44,6 +74,15 @@ go build -o /tmp/sightpane . && SIGHTPANE_DEFAULT_PROJECT="Casino CRM" SIGHTPANE
 | `SIGHTPANE_S3_REGION` / `SIGHTPANE_S3_USE_SSL` | empty | region only matters when the zonegroup has one; set `SIGHTPANE_S3_USE_SSL` to anything for HTTPS |
 | `SIGHTPANE_PROXY_PROTOCOL` | empty | `1` makes the listener read a PROXY protocol (v1/v2) header — for layer-4 proxies (caddy-l4, HAProxy) |
 | `SIGHTPANE_TRUSTED_PROXIES` | empty | comma-separated IPs/CIDRs; when set, the PROXY header is honoured only for connections from those peers |
+| `SIGHTPANE_TEST_DB` | empty | tests only: a database to use instead of the container they otherwise start themselves |
+
+### Tests
+
+`go test ./...` needs Docker: the packages that touch the store start a
+TimescaleDB container ([`internal/testdb`](internal/testdb)) and give each test a
+schema of its own inside it. Point `SIGHTPANE_TEST_DB` at a server that is already
+running to skip the container — that is what CI does, and what makes a long
+debugging session quicker.
 
 ## Layout
 
@@ -54,7 +93,8 @@ internal/config          every environment variable, with its default
 internal/apierr          error codes and the Error type (below store and server, so both use it)
 internal/netx            PROXY protocol listener
 internal/blob            replay frame storage: a directory, or an S3/Ceph object store
-internal/store           SQLite: schema, ingest, queries. No HTTP
+internal/store           the database: schema, migrations, ingest, queries. No HTTP
+internal/testdb          the TimescaleDB the tests run against (imported only from _test.go)
 internal/server          Fiber: routes, middleware, one handler file per resource. No SQL
 ```
 
@@ -64,7 +104,7 @@ a `apierr.Error` and rendered once by the server's error handler, so no handler
 keeps a mapping table.
 
 `SIGTERM` shuts the app down with a 10 s grace period so in-flight envelopes
-finish and SQLite is closed cleanly.
+finish and the connection pool is closed cleanly.
 
 ## API
 
@@ -199,11 +239,14 @@ limit is 32 MB. Requests that are not files and not under `/api/` are answered
 with the dashboard's `index.html`, because it is a single-page app; `/api/` paths
 keep returning a JSON 404.
 
-## Docker (single container)
+## Docker
 
 ```bash
 docker compose up -d --build      # http://localhost:8790 → dashboard + API
 ```
+
+Two containers: the backend and TimescaleDB. The backend waits for the database's
+health check and migrates the schema itself on start, so there is no setup step.
 
 [`Dockerfile`](Dockerfile) has three stages: a dashboard build that clones
 [sightpane/ui](https://github.com/sightpane/ui) at `UI_REF` and builds it with the
@@ -213,9 +256,10 @@ the API on its own origin), a cgo-free Go build, and an `alpine` runtime image
 `--build-arg UI_REF=v0.2.0`, or leave it out entirely with `UI_REF=none` for an
 API-only image that serves the placeholder page compiled into the binary.
 
-Data lives in the `sightpane-data` volume (`/data`: SQLite plus the frame
-PNGs). The environment variables are in [`docker-compose.yml`](docker-compose.yml):
-default project / key, admin email / password. Behind a reverse proxy, the
+The database lives in the `pg-data` volume and the frame PNGs in `sightpane-data`
+(`/data`). The environment variables are in [`docker-compose.yml`](docker-compose.yml):
+the DSN, retention, default project / key, admin email / password — change
+`POSTGRES_PASSWORD` and `SIGHTPANE_ADMIN_PASSWORD` before exposing it. Behind a reverse proxy, the
 `X-Forwarded-For` header is recorded as the session IP.
 
 Replay frames can also go to an object store instead of the volume, which is what

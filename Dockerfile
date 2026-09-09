@@ -35,8 +35,8 @@ RUN mkdir -p /out && if [ "$UI_REF" != "none" ]; then \
       cp -a build/web/. /out/; \
     fi
 
-# 2) The backend: Go with cgo off, which the pure-Go modernc sqlite driver
-#    allows and which is what lets the binary run on the bare alpine below.
+# 2) The backend: Go with cgo off, which pgx allows because it is pure Go, and
+#    which is what lets the binary run on the bare alpine below.
 FROM golang:1.26-alpine AS backend
 WORKDIR /src
 COPY go.mod go.sum ./

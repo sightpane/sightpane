@@ -35,7 +35,7 @@ const projectCols = `id, name, api_key, platform, created_by, created_at`
 
 func scanProject(sc interface{ Scan(...any) error }) (*Project, error) {
 	p := &Project{}
-	if err := sc.Scan(&p.ID, &p.Name, &p.APIKey, &p.Platform, &p.CreatedBy, &p.CreatedAt); err != nil {
+	if err := sc.Scan(&p.ID, &p.Name, &p.APIKey, &p.Platform, &p.CreatedBy, tsCol{&p.CreatedAt}); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, ErrNotFound
 		}
@@ -70,26 +70,27 @@ func (s *Store) CreateProject(name, platform, key string, owner *int64) (*Projec
 	if platform == "" {
 		platform = "flutter"
 	}
-	now := time.Now().UTC().Format(time.RFC3339Nano)
-	res, err := s.db.Exec(`INSERT INTO projects(name, api_key, platform, created_by, created_at) VALUES(?,?,?,?,?)`, name, key, platform, owner, now)
-	if err != nil {
+	now := time.Now().UTC()
+	// RETURNING rather than LastInsertId, which pgx does not implement.
+	var id int64
+	if err := s.db.QueryRow(`INSERT INTO projects(name, api_key, platform, created_by, created_at) VALUES($1,$2,$3,$4,$5) RETURNING id`,
+		name, key, platform, owner, now).Scan(&id); err != nil {
 		return nil, err
 	}
-	id, _ := res.LastInsertId()
 	if owner != nil {
 		if err := s.AddMember(id, *owner, "owner"); err != nil {
 			return nil, err
 		}
 	}
-	return &Project{ID: id, Name: name, APIKey: key, Platform: platform, CreatedBy: owner, CreatedAt: now}, nil
+	return &Project{ID: id, Name: name, APIKey: key, Platform: platform, CreatedBy: owner, CreatedAt: now.Format(time.RFC3339Nano)}, nil
 }
 
 func (s *Store) ProjectByKey(key string) (*Project, error) {
-	return scanProject(s.db.QueryRow(`SELECT `+projectCols+` FROM projects WHERE api_key=?`, key))
+	return scanProject(s.db.QueryRow(`SELECT `+projectCols+` FROM projects WHERE api_key=$1`, key))
 }
 
 func (s *Store) ProjectByID(id int64) (*Project, error) {
-	p, err := scanProject(s.db.QueryRow(`SELECT `+projectCols+` FROM projects WHERE id=?`, id))
+	p, err := scanProject(s.db.QueryRow(`SELECT `+projectCols+` FROM projects WHERE id=$1`, id))
 	if err != nil {
 		return nil, err
 	}
@@ -98,17 +99,19 @@ func (s *Store) ProjectByID(id int64) (*Project, error) {
 }
 
 func (s *Store) fillProjectCounters(p *Project) {
-	since := time.Now().UTC().Add(-24 * time.Hour).Format(time.RFC3339Nano)
-	_ = s.db.QueryRow(`SELECT COUNT(*) FROM sessions WHERE project_id=? AND started_at>=?`, p.ID, since).Scan(&p.Sessions24h)
-	_ = s.db.QueryRow(`SELECT COUNT(*) FROM items WHERE project_id=? AND type='error' AND ts>=?`, p.ID, since).Scan(&p.Errors24h)
-	_ = s.db.QueryRow(`SELECT COUNT(*) FROM issues WHERE project_id=? AND resolved=0`, p.ID).Scan(&p.OpenIssues)
+	// A rolling 24 hours, not the last calendar day, so this counts raw items:
+	// the daily aggregate cannot answer a window that starts inside a bucket.
+	since := time.Now().UTC().Add(-24 * time.Hour)
+	_ = s.db.QueryRow(`SELECT COUNT(*) FROM sessions WHERE project_id=$1 AND started_at>=$2`, p.ID, since).Scan(&p.Sessions24h)
+	_ = s.db.QueryRow(`SELECT COUNT(*) FROM items WHERE project_id=$1 AND type='error' AND ts>=$2`, p.ID, since).Scan(&p.Errors24h)
+	_ = s.db.QueryRow(`SELECT COUNT(*) FROM issues WHERE project_id=$1 AND NOT resolved`, p.ID).Scan(&p.OpenIssues)
 }
 
 // ListProjectsForUser returns only the projects the user is a member of, each
 // with the role they hold there, which is what the dashboard uses to decide
 // which owner-only actions to show.
 func (s *Store) ListProjectsForUser(userID int64) ([]Project, error) {
-	rows, err := s.db.Query(`SELECT p.id, p.name, p.api_key, p.platform, p.created_by, p.created_at, m.role FROM projects p JOIN project_members m ON m.project_id=p.id WHERE m.user_id=? ORDER BY p.name`, userID)
+	rows, err := s.db.Query(`SELECT p.id, p.name, p.api_key, p.platform, p.created_by, p.created_at, m.role FROM projects p JOIN project_members m ON m.project_id=p.id WHERE m.user_id=$1 ORDER BY p.name`, userID)
 	if err != nil {
 		return nil, err
 	}
@@ -116,7 +119,7 @@ func (s *Store) ListProjectsForUser(userID int64) ([]Project, error) {
 	out := []Project{}
 	for rows.Next() {
 		var p Project
-		if err := rows.Scan(&p.ID, &p.Name, &p.APIKey, &p.Platform, &p.CreatedBy, &p.CreatedAt, &p.Role); err != nil {
+		if err := rows.Scan(&p.ID, &p.Name, &p.APIKey, &p.Platform, &p.CreatedBy, tsCol{&p.CreatedAt}, &p.Role); err != nil {
 			return nil, err
 		}
 		out = append(out, p)
@@ -131,7 +134,7 @@ func (s *Store) ListProjectsForUser(userID int64) ([]Project, error) {
 }
 
 func (s *Store) UpdateProject(id int64, name, platform string) error {
-	res, err := s.db.Exec(`UPDATE projects SET name=?, platform=? WHERE id=?`, strings.TrimSpace(name), platform, id)
+	res, err := s.db.Exec(`UPDATE projects SET name=$1, platform=$2 WHERE id=$3`, strings.TrimSpace(name), platform, id)
 	if err != nil {
 		return err
 	}
@@ -146,7 +149,7 @@ func (s *Store) UpdateProject(id int64, name, platform string) error {
 // rotating one.
 func (s *Store) RotateKey(id int64) (string, error) {
 	key := randomKey()
-	res, err := s.db.Exec(`UPDATE projects SET api_key=? WHERE id=?`, key, id)
+	res, err := s.db.Exec(`UPDATE projects SET api_key=$1 WHERE id=$2`, key, id)
 	if err != nil {
 		return "", err
 	}
@@ -160,7 +163,7 @@ func (s *Store) RotateKey(id int64) (string, error) {
 // collected before the transaction because the frame files live on disk, outside
 // it, and can only be unlinked once the rows are safely gone.
 func (s *Store) DeleteProject(id int64) error {
-	rows, err := s.db.Query(`SELECT id FROM sessions WHERE project_id=?`, id)
+	rows, err := s.db.Query(`SELECT id FROM sessions WHERE project_id=$1`, id)
 	if err != nil {
 		return err
 	}
@@ -177,12 +180,12 @@ func (s *Store) DeleteProject(id int64) error {
 	}
 	defer tx.Rollback()
 	for _, q := range []string{
-		`DELETE FROM frames WHERE session_id IN (SELECT id FROM sessions WHERE project_id=?)`,
-		`DELETE FROM items WHERE project_id=?`,
-		`DELETE FROM issues WHERE project_id=?`,
-		`DELETE FROM sessions WHERE project_id=?`,
-		`DELETE FROM project_members WHERE project_id=?`,
-		`DELETE FROM projects WHERE id=?`,
+		`DELETE FROM frames WHERE session_id IN (SELECT id FROM sessions WHERE project_id=$1)`,
+		`DELETE FROM items WHERE project_id=$1`,
+		`DELETE FROM issues WHERE project_id=$1`,
+		`DELETE FROM sessions WHERE project_id=$1`,
+		`DELETE FROM project_members WHERE project_id=$1`,
+		`DELETE FROM projects WHERE id=$1`,
 	} {
 		if _, err := tx.Exec(q, id); err != nil {
 			return err

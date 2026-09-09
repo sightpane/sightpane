@@ -6,7 +6,7 @@ description: How the sightpane Go backend is built on Fiber v3 — routing, midd
 # Fiber in sightpane
 
 The backend is Fiber v3 (`github.com/gofiber/fiber/v3`) on fasthttp, one binary,
-SQLite behind it. This file is the house pattern; it exists because Fiber has
+TimescaleDB behind it. This file is the house pattern; it exists because Fiber has
 several sharp edges that cost real debugging time here, and because a recipe
 copied from upstream usually needs adjusting before it fits.
 
@@ -20,7 +20,7 @@ copied from upstream usually needs adjusting before it fits.
     config/                every environment variable, with its default
     apierr/                error codes + the Error type (below store and server, so both can use it)
     netx/                  PROXY protocol listener
-    store/                 SQLite: schema, ingest, queries. Knows nothing about HTTP
+    store/                 the database: schema, migrations, ingest, queries. Knows nothing about HTTP
     server/                Fiber: routes, middleware, one handler file per resource
 ```
 
@@ -147,7 +147,7 @@ which can be revoked), templating engines (the UI is a Flutter build).
 | `postgresql`, `sqlc` | Driver and query patterns for the same migration |
 | `validation` | `go-playground/validator` — only if request shapes grow past a handful of fields |
 | `clean-architecture`, `hexagonal` | Reference layouts. Deliberately heavier than this repo needs; we stopped at store/server |
-| `prefork`, `multiple-ports` | Not applicable: SQLite has a single writer, so a second process would contend |
+| `prefork`, `multiple-ports` | A second process would open a second connection pool against the same database for no gain; scale with replicas instead |
 
 When porting a recipe, check three things: it is v3 (`func(c fiber.Ctx) error`,
 not `*fiber.Ctx`), it returns errors instead of writing them, and it does not

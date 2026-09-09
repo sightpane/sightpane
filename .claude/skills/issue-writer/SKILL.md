@@ -1,6 +1,6 @@
 ---
 name: issue-writer
-description: Write GitHub issues for sightpane/sightpane that a developer or agent can start on without a second conversation — every issue names the exact files and symbols in the Go backend (Fiber v3, SQLite, the ingest API), the envelope/API contract involved, the tests that pin current behaviour, and a fix shape. Use whenever the user asks to "create an issue", "file this", "open a ticket", "issue aç", "turn these findings into issues", or asks to convert audit results, a PR review comment, or a bug report into GitHub issues — the house default is always this level of detail.
+description: Write GitHub issues for sightpane/sightpane that a developer or agent can start on without a second conversation — every issue names the exact files and symbols in the Go backend (Fiber v3, TimescaleDB, the ingest API), the envelope/API contract involved, the tests that pin current behaviour, and a fix shape. Use whenever the user asks to "create an issue", "file this", "open a ticket", "issue aç", "turn these findings into issues", or asks to convert audit results, a PR review comment, or a bug report into GitHub issues — the house default is always this level of detail.
 ---
 
 > **This repository is one of three.** [sightpane/sightpane](https://github.com/sightpane/sightpane)
@@ -17,7 +17,7 @@ fresh window that sees the issue text and nothing else. The biggest failure is a
 that describes a problem correctly but leaves the reader to find where it lives.
 
 So: **an issue must name its coordinates.** Files with line numbers, which of the three
-sub-projects, the SQLite table/column, the envelope item or API endpoint, the tests that
+sub-projects, the table/column, the envelope item or API endpoint, the tests that
 pin today's behaviour, the README section that explains the subsystem. If you cannot name
 them, you have not researched enough to file yet.
 
@@ -35,7 +35,7 @@ about depth, use the full template below, not a one-paragraph stub.
   `frontend/lib`; open the file and confirm the line still says what you think.
 - **Contract coordinates** — which envelope item type/field (`package/lib/src/models.dart`
   `SightpaneItem.*` ↔ `internal/store/store.go` `itemHead` + `Ingest` switch), which endpoint
-  (`backend/api.go` route table), which SQLite column (`store.go` `migrate()` CREATE +
+  (`backend/api.go` route table), which column (a new file under `internal/store/migrations/` +
   the `ALTER TABLE … ADD COLUMN` list), which env var (`main.go` `env(...)`,
   `frontend/lib/core/config.dart`, `package/lib/src/options.dart`).
 - **Blast radius** — every caller; a helper used by both the SDK and the dashboard
@@ -94,7 +94,7 @@ session since the schema change").
 
 A sketch, not a mandate. Name the approach considered and rejected, and why. Flag what
 makes it harder than it looks (e.g. "prefix is fixed at egress start, so this needs a
-rotation loop", "SQLite single writer — keep it out of the ingest transaction").
+rotation loop", "keep the object-store round trip out of the ingest transaction").
 
 ## Acceptance
 

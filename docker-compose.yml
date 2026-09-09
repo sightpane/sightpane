@@ -11,9 +11,17 @@ services:
         UI_REF: "${UI_REF:-main}"
     image: ghcr.io/sightpane/sightpane:latest
     container_name: sightpane
+    depends_on:
+      timescaledb:
+        condition: service_healthy
     ports:
       - "8790:8790"
     environment:
+      # The database. It is required — there is no local file to fall back to.
+      SIGHTPANE_DB: "postgres://sightpane:${POSTGRES_PASSWORD:-sightpane}@timescaledb:5432/sightpane?sslmode=disable"
+      # Items older than this are dropped by a TimescaleDB retention policy.
+      # 0 keeps everything.
+      SIGHTPANE_RETENTION_DAYS: "${SIGHTPANE_RETENTION_DAYS:-90}"
       SIGHTPANE_DEFAULT_PROJECT: "Casino CRM"
       SIGHTPANE_DEFAULT_KEY: "dev" # the first project key handed to the SDK
       SIGHTPANE_ADMIN_EMAIL: "admin@sightpane.local"
@@ -26,11 +34,38 @@ services:
       SIGHTPANE_S3_ACCESS_KEY: "${SIGHTPANE_S3_ACCESS_KEY:-}"
       SIGHTPANE_S3_SECRET_KEY: "${SIGHTPANE_S3_SECRET_KEY:-}"
     volumes:
-      - sightpane-data:/data # sightpane.db, and the frame PNGs when SIGHTPANE_FRAMES=fs
+      - sightpane-data:/data # the frame PNGs, when SIGHTPANE_FRAMES=fs
     restart: unless-stopped
     # For the real client IP: put this behind a reverse proxy that sends
     # X-Forwarded-For / X-Real-IP (the backend reads those headers), or use
     # `network_mode: host` instead of the bridge network (then drop `ports`).
+
+  # The database. Everything except the replay frames lives here.
+  #
+  # TimescaleDB rather than plain Postgres because `items` is the table that
+  # grows without bound and is only ever read by time: as a hypertable it is one
+  # chunk per day, the dashboard's daily counts come from a continuous aggregate
+  # instead of a full scan, old chunks compress, and expiring data is a chunk
+  # drop rather than a DELETE. The backend runs on a plain Postgres too — it
+  # falls back to an ordinary view — but then nothing expires on its own.
+  timescaledb:
+    image: timescale/timescaledb:2.30.0-pg17
+    container_name: sightpane-db
+    environment:
+      POSTGRES_DB: sightpane
+      POSTGRES_USER: sightpane
+      POSTGRES_PASSWORD: "${POSTGRES_PASSWORD:-sightpane}" # change this in production
+    volumes:
+      - pg-data:/var/lib/postgresql/data
+    restart: unless-stopped
+    healthcheck:
+      # The backend migrates the schema on start, so it must not connect before
+      # the server is actually accepting connections.
+      test: ["CMD-SHELL", "pg_isready -U sightpane -d sightpane"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 30s
 
   # Ceph, for keeping replay frames in an object store instead of a volume.
   #
@@ -78,5 +113,6 @@ services:
 
 volumes:
   sightpane-data:
+  pg-data:
   ceph-etc:
   ceph-lib:

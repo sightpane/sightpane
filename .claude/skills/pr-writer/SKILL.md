@@ -1,6 +1,6 @@
 ---
 name: pr-writer
-description: Update GitHub Pull Request titles and descriptions for sightpane/sightpane with precise context — what changed in the Go backend (Fiber v3, SQLite, the ingest API), any change to the envelope wire protocol or the SQLite schema, and the verification actually run. Use whenever the user asks to "update the PR", "write a PR description", "PR aç", "PR'ı güncelle", or "add details to the pull request".
+description: Update GitHub Pull Request titles and descriptions for sightpane/sightpane with precise context — what changed in the Go backend (Fiber v3, TimescaleDB, the ingest API), any change to the envelope wire protocol or the schema, and the verification actually run. Use whenever the user asks to "update the PR", "write a PR description", "PR aç", "PR'ı güncelle", or "add details to the pull request".
 ---
 
 > **This repository is one of three.** [sightpane/sightpane](https://github.com/sightpane/sightpane)
@@ -25,7 +25,7 @@ Authors professional pull request titles and descriptions for sightpane and appl
 Understand what was actually done — do not guess.
 - Conversation history and `git log --oneline origin/main..HEAD`, `git diff --stat origin/main..HEAD`.
 - Which parts changed: SDK (`package/lib/src`), backend (`store.go`, `api.go`, `auth.go`, `fingerprint.go`, `main.go`), dashboard (`frontend/lib`), Docker (`Dockerfile`, `docker-compose.yml`), docs (READMEs).
-- **Contract changes** deserve their own bullet: a new envelope item type or field (`package/lib/src/models.dart` ↔ `internal/store/store.go` `itemHead`/`Ingest`), a new API endpoint (`backend/api.go` routes), a SQLite column (`store.go` `migrate()` + the `ALTER TABLE` list), a new `SIGHTPANE_*`/`SIGHTPANE_API_URL` env var.
+- **Contract changes** deserve their own bullet: a new envelope item type or field (`package/lib/src/models.dart` ↔ `internal/store/store.go` `itemHead`/`Ingest`), a new API endpoint (`backend/api.go` routes), a column (a new numbered file under `internal/store/migrations/`), a new `SIGHTPANE_*`/`SIGHTPANE_API_URL` env var.
 - **CRITICAL:** only list things that were explicitly implemented in this branch.
 
 ### 2. Check existing PRs
