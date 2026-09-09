@@ -1,0 +1,430 @@
+// sightpane — error tracking, product analytics and session replay you host yourself.
+// Copyright (C) 2026 Can Us
+//
+// SPDX-License-Identifier: AGPL-3.0-or-later
+
+package store
+
+import (
+	"context"
+	"crypto/sha1"
+	"database/sql"
+	"encoding/hex"
+	"encoding/json"
+	"errors"
+	"io"
+	"sort"
+	"strings"
+	"time"
+
+	"sightpane/internal/blob"
+)
+
+// --- Read queries ---
+
+type Session struct {
+	ID         string          `json:"id"`
+	ProjectID  int64           `json:"project_id"`
+	StartedAt  string          `json:"started_at"`
+	LastSeenAt string          `json:"last_seen_at"`
+	EndedAt    *string         `json:"ended_at"`
+	UserID     string          `json:"user_id"`
+	User       json.RawMessage `json:"user"`
+	Device     json.RawMessage `json:"device"`
+	Props      json.RawMessage `json:"props"`
+	Platform   string          `json:"platform"`
+	Release    string          `json:"release"`
+	ErrorCount int             `json:"error_count"`
+	EventCount int             `json:"event_count"`
+	FrameCount int             `json:"frame_count"`
+	IP         string          `json:"ip"`
+	Browser    string          `json:"browser"`
+	VisitorKey string          `json:"visitor_key"`
+	Route      string          `json:"current_route"`
+}
+
+type SessionFilter struct {
+	ProjectID  int64
+	UserID     string
+	OnlyErrors bool
+	Limit      int
+}
+
+const sessionCols = `id, project_id, started_at, last_seen_at, ended_at, user_id, user_json, device_json, props_json, platform, release, error_count, event_count, frame_count, ip, browser, visitor_key, current_route`
+
+func scanSession(sc interface{ Scan(...any) error }) (*Session, error) {
+	var s Session
+	var user, device, props string
+	if err := sc.Scan(&s.ID, &s.ProjectID, &s.StartedAt, &s.LastSeenAt, &s.EndedAt, &s.UserID, &user, &device, &props, &s.Platform, &s.Release, &s.ErrorCount, &s.EventCount, &s.FrameCount, &s.IP, &s.Browser, &s.VisitorKey, &s.Route); err != nil {
+		return nil, err
+	}
+	s.User, s.Device, s.Props = json.RawMessage(user), json.RawMessage(device), json.RawMessage(props)
+	return &s, nil
+}
+
+func (s *Store) ListSessions(f SessionFilter) ([]Session, error) {
+	q := `SELECT ` + sessionCols + ` FROM sessions WHERE project_id=?`
+	args := []any{f.ProjectID}
+	if f.UserID != "" {
+		q += ` AND user_id=?`
+		args = append(args, f.UserID)
+	}
+	if f.OnlyErrors {
+		q += ` AND error_count>0`
+	}
+	limit := f.Limit
+	if limit <= 0 || limit > 500 {
+		limit = 100
+	}
+	q += ` ORDER BY last_seen_at DESC LIMIT ?`
+	args = append(args, limit)
+	rows, err := s.db.Query(q, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []Session{}
+	for rows.Next() {
+		sess, err := scanSession(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, *sess)
+	}
+	return out, rows.Err()
+}
+
+type Item struct {
+	ID      int64           `json:"id"`
+	TS      string          `json:"ts"`
+	Type    string          `json:"type"`
+	Name    string          `json:"name"`
+	Body    json.RawMessage `json:"body"`
+	IssueID *int64          `json:"issue_id,omitempty"`
+	Session string          `json:"session_id,omitempty"`
+}
+
+type Frame struct {
+	Seq    int             `json:"seq"`
+	TS     string          `json:"ts"`
+	Width  int             `json:"width"`
+	Height int             `json:"height"`
+	Taps   json.RawMessage `json:"taps"`
+}
+
+type SessionDetail struct {
+	Session
+	Items  []Item  `json:"items"`
+	Frames []Frame `json:"frames"`
+}
+
+func (s *Store) GetSession(id string) (*SessionDetail, error) {
+	sess, err := scanSession(s.db.QueryRow(`SELECT `+sessionCols+` FROM sessions WHERE id=?`, id))
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, ErrNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	d := &SessionDetail{Session: *sess, Items: []Item{}, Frames: []Frame{}}
+	rows, err := s.db.Query(`SELECT id, ts, type, name, body_json, issue_id FROM items WHERE session_id=? ORDER BY ts, id`, id)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var it Item
+		var body string
+		if err := rows.Scan(&it.ID, &it.TS, &it.Type, &it.Name, &body, &it.IssueID); err != nil {
+			return nil, err
+		}
+		it.Body = json.RawMessage(body)
+		d.Items = append(d.Items, it)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	frows, err := s.db.Query(`SELECT seq, ts, width, height, taps_json FROM frames WHERE session_id=? ORDER BY seq`, id)
+	if err != nil {
+		return nil, err
+	}
+	defer frows.Close()
+	for frows.Next() {
+		var f Frame
+		var taps string
+		if err := frows.Scan(&f.Seq, &f.TS, &f.Width, &f.Height, &taps); err != nil {
+			return nil, err
+		}
+		f.Taps = json.RawMessage(taps)
+		d.Frames = append(d.Frames, f)
+	}
+	return d, frows.Err()
+}
+
+// FrameReader opens one replay frame, and reports ErrNotFound when the session
+// has no such frame.
+//
+// The row is checked first and the object second: the database is the record of
+// what exists, so a missing object is a storage fault worth surfacing, not a
+// 404 to paper over.
+func (s *Store) FrameReader(ctx context.Context, sessionID string, seq int) (io.ReadCloser, int64, error) {
+	var n int
+	if err := s.db.QueryRow(`SELECT COUNT(*) FROM frames WHERE session_id=? AND seq=?`, sessionID, seq).Scan(&n); err != nil {
+		return nil, 0, err
+	}
+	if n == 0 {
+		return nil, 0, ErrNotFound
+	}
+	return s.blobs.Get(ctx, blob.FrameKey(sessionID, seq))
+}
+
+type Issue struct {
+	ID          int64  `json:"id"`
+	ProjectID   int64  `json:"project_id"`
+	Fingerprint string `json:"fingerprint"`
+	Title       string `json:"title"`
+	Exception   string `json:"exception"`
+	FirstSeen   string `json:"first_seen"`
+	LastSeen    string `json:"last_seen"`
+	Count       int    `json:"count"`
+	Resolved    bool   `json:"resolved"`
+}
+
+func (s *Store) ListIssues(projectID int64, includeResolved bool) ([]Issue, error) {
+	q := `SELECT id, project_id, fingerprint, title, exception, first_seen, last_seen, count, resolved FROM issues WHERE project_id=?`
+	if !includeResolved {
+		q += ` AND resolved=0`
+	}
+	rows, err := s.db.Query(q+` ORDER BY last_seen DESC LIMIT 500`, projectID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []Issue{}
+	for rows.Next() {
+		var i Issue
+		if err := rows.Scan(&i.ID, &i.ProjectID, &i.Fingerprint, &i.Title, &i.Exception, &i.FirstSeen, &i.LastSeen, &i.Count, &i.Resolved); err != nil {
+			return nil, err
+		}
+		out = append(out, i)
+	}
+	return out, rows.Err()
+}
+
+type IssueDetail struct {
+	Issue
+	Occurrences []Item `json:"occurrences"`
+}
+
+func (s *Store) GetIssue(id int64) (*IssueDetail, error) {
+	var i Issue
+	err := s.db.QueryRow(`SELECT id, project_id, fingerprint, title, exception, first_seen, last_seen, count, resolved FROM issues WHERE id=?`, id).
+		Scan(&i.ID, &i.ProjectID, &i.Fingerprint, &i.Title, &i.Exception, &i.FirstSeen, &i.LastSeen, &i.Count, &i.Resolved)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, ErrNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	d := &IssueDetail{Issue: i, Occurrences: []Item{}}
+	rows, err := s.db.Query(`SELECT id, session_id, ts, type, name, body_json FROM items WHERE issue_id=? ORDER BY ts DESC LIMIT 50`, id)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var it Item
+		var body string
+		if err := rows.Scan(&it.ID, &it.Session, &it.TS, &it.Type, &it.Name, &body); err != nil {
+			return nil, err
+		}
+		it.Body = json.RawMessage(body)
+		d.Occurrences = append(d.Occurrences, it)
+	}
+	return d, rows.Err()
+}
+
+func (s *Store) SetIssueResolved(id int64, resolved bool) error {
+	res, err := s.db.Exec(`UPDATE issues SET resolved=? WHERE id=?`, resolved, id)
+	if err != nil {
+		return err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+type EventCount struct {
+	Name  string `json:"name"`
+	Day   string `json:"day"`
+	Count int    `json:"count"`
+	Users int    `json:"users"`
+}
+
+// EventSummary counts each event name per day over the last [days] days, which
+// is what the events page charts. Users is a distinct visitor count, so an event
+// fired repeatedly by one visitor does not look like reach.
+func (s *Store) EventSummary(projectID int64, days int) ([]EventCount, error) {
+	if days <= 0 {
+		days = 7
+	}
+	since := time.Now().UTC().AddDate(0, 0, -days).Format(time.RFC3339Nano)
+	rows, err := s.db.Query(`SELECT i.name, substr(i.ts,1,10) AS day, COUNT(*), COUNT(DISTINCT s.visitor_key)
+		FROM items i JOIN sessions s ON s.id=i.session_id
+		WHERE i.project_id=? AND i.type='event' AND i.ts>=? GROUP BY i.name, day ORDER BY day DESC, COUNT(*) DESC`, projectID, since)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []EventCount{}
+	for rows.Next() {
+		var e EventCount
+		if err := rows.Scan(&e.Name, &e.Day, &e.Count, &e.Users); err != nil {
+			return nil, err
+		}
+		out = append(out, e)
+	}
+	return out, rows.Err()
+}
+
+// SessionProject returns the project a session belongs to. Session ids are
+// global, so this is how a request for one gets a project to check membership
+// against.
+func (s *Store) SessionProject(sessionID string) (int64, error) {
+	var pid int64
+	if err := s.db.QueryRow(`SELECT project_id FROM sessions WHERE id=?`, sessionID).Scan(&pid); err != nil {
+		return 0, ErrNotFound
+	}
+	return pid, nil
+}
+
+// IssueProject returns the project an issue belongs to, for the same membership
+// check as SessionProject: issue ids are global too.
+func (s *Store) IssueProject(issueID int64) (int64, error) {
+	var pid int64
+	if err := s.db.QueryRow(`SELECT project_id FROM issues WHERE id=?`, issueID).Scan(&pid); err != nil {
+		return 0, ErrNotFound
+	}
+	return pid, nil
+}
+
+// VisitorKey digests user id, IP and browser into one short key. An anonymous
+// visitor has no user id, so the other two still separate them from each other
+// instead of collapsing everyone signed out into a single visitor.
+func VisitorKey(userID, ip, browser string) string {
+	sum := sha1.Sum([]byte(userID + "|" + ip + "|" + browser))
+	return hex.EncodeToString(sum[:8])
+}
+
+type LiveViewer struct {
+	SessionID string `json:"session_id"`
+	UserID    string `json:"user_id"`
+	UserLabel string `json:"user_label"`
+	IP        string `json:"ip"`
+	Browser   string `json:"browser"`
+	Platform  string `json:"platform"`
+	Route     string `json:"route"`
+	LastSeen  string `json:"last_seen"`
+	StartedAt string `json:"started_at"`
+}
+
+type LiveStatus struct {
+	Window   int          `json:"window_seconds"`
+	Count    int          `json:"count"`
+	Visitors int          `json:"visitors"`
+	Routes   []NameCount  `json:"routes"`
+	Viewers  []LiveViewer `json:"viewers"`
+}
+
+// Live lists the sessions that sent an envelope within the last [window] seconds
+// and have not ended, plus the routes they are on. A session that stops sending
+// simply falls out of the window, so a client that dies without a session_end
+// does not stay on the live view forever.
+func (s *Store) Live(projectID int64, window int) (*LiveStatus, error) {
+	if window <= 0 {
+		window = 60
+	}
+	since := time.Now().UTC().Add(-time.Duration(window) * time.Second).Format(time.RFC3339Nano)
+	rows, err := s.db.Query(`SELECT id, user_id, user_json, ip, browser, platform, current_route, last_seen_at, started_at, visitor_key FROM sessions
+		WHERE project_id=? AND last_seen_at>=? AND ended_at IS NULL ORDER BY last_seen_at DESC LIMIT 500`, projectID, since)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	st := &LiveStatus{Window: window, Routes: []NameCount{}, Viewers: []LiveViewer{}}
+	routes := map[string]int{}
+	visitors := map[string]bool{}
+	for rows.Next() {
+		var v LiveViewer
+		var userJSON, vk string
+		if err := rows.Scan(&v.SessionID, &v.UserID, &userJSON, &v.IP, &v.Browser, &v.Platform, &v.Route, &v.LastSeen, &v.StartedAt, &vk); err != nil {
+			return nil, err
+		}
+		var u struct {
+			Email, Name string
+		}
+		_ = json.Unmarshal([]byte(userJSON), &u)
+		v.UserLabel = u.Email
+		if v.UserLabel == "" {
+			v.UserLabel = u.Name
+		}
+		if v.UserLabel == "" {
+			v.UserLabel = v.UserID
+		}
+		st.Viewers = append(st.Viewers, v)
+		routes[v.Route]++
+		visitors[vk] = true
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	st.Count = len(st.Viewers)
+	st.Visitors = len(visitors)
+	for r, n := range routes {
+		st.Routes = append(st.Routes, NameCount{Name: r, Count: n})
+	}
+	sort.Slice(st.Routes, func(i, j int) bool {
+		if st.Routes[i].Count != st.Routes[j].Count {
+			return st.Routes[i].Count > st.Routes[j].Count
+		}
+		return st.Routes[i].Name < st.Routes[j].Name
+	})
+	return st, nil
+}
+
+// BrowserLabel is what the dashboard shows next to a session: the browser name
+// the SDK reported, or one derived from the user agent when it did not, or the
+// operating system on platforms that are not the web. On the web with nothing to
+// go on it stays empty rather than repeating the platform, which would read as
+// "web · web".
+func BrowserLabel(browser, ua, platform, os string) string {
+	if browser != "" && browser != platform && browser != os {
+		return browser
+	}
+	if ua != "" {
+		return browserFromUA(ua)
+	}
+	if platform != "web" && os != "" && os != "web" {
+		return os
+	}
+	return ""
+}
+
+func browserFromUA(ua string) string {
+	switch {
+	case strings.Contains(ua, "Edg/"):
+		return "Edge"
+	case strings.Contains(ua, "OPR/"), strings.Contains(ua, "Opera"):
+		return "Opera"
+	case strings.Contains(ua, "SamsungBrowser"):
+		return "Samsung"
+	case strings.Contains(ua, "Firefox/"):
+		return "Firefox"
+	case strings.Contains(ua, "Chrome/"), strings.Contains(ua, "CriOS/"):
+		return "Chrome"
+	case strings.Contains(ua, "Safari/"):
+		return "Safari"
+	}
+	return "Browser"
+}
