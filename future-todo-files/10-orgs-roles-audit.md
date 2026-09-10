@@ -45,7 +45,7 @@ without an audit log, destructive actions cannot be traced.
 
 ## Acceptance
 
-- [ ] The `viewer` role can read and no write endpoint works (test)
-- [ ] Key rotation/project deletion appear in the audit log with the user + IP
-- [ ] Source map upload works with a scoped token, out-of-scope returns 403
-- [ ] The existing owner/member tests keep passing
+- [x] The `viewer` role can read and no write endpoint works (test)
+- [x] Key rotation/project deletion appear in the audit log with the user + IP
+- [x] Source map upload works with a scoped token, out-of-scope returns 403
+- [x] The existing owner/member tests keep passing

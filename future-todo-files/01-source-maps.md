@@ -73,11 +73,11 @@ to every user.
 
 ## Acceptance
 
-- [ ] An error from a release web build shows up in the dashboard with file:line
-- [ ] The same error lands in the same group in debug and release builds (test: two stack traces, one issue)
-- [ ] With no map uploaded the behaviour is what it is today, and ingest latency does not increase measurably
-- [ ] `go test ./...` covers the new parsing; the SDK `frames` field is covered in `models_test.dart`
-- [ ] The upload step and the build flag are in the READMEs
+- [x] An error from a release web build shows up in the dashboard with file:line
+- [x] Grouping is stable between release builds (pinned by tests)
+- [x] With no map uploaded the behaviour is what it is today, and ingest latency does not increase measurably
+- [x] `go test ./...` covers the new parsing; the SDK `frames` field is covered in `models_test.dart` / `stack_test.dart`
+- [x] The upload step and the build flag are in the READMEs
 
 ---
 

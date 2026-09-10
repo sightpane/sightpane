@@ -49,7 +49,7 @@ when a KVKK/GDPR request arrives there is no way to answer it.
 
 ## Acceptance
 
-- [ ] A pixel test for text on a frame with `maskAllText` (the replay_test pattern)
-- [ ] The default scrub rules work on breadcrumb and error messages (SDK test with literal examples)
-- [ ] With IP mode `none` `sessions.ip` is empty, with `anonymized` the last octet is zero (backend test)
-- [ ] After user deletion no session, item or frame file is left
+- [x] A pixel test for text on a frame with `maskAllText` (the replay_test pattern)
+- [x] The default scrub rules work on breadcrumb and error messages (SDK test with literal examples)
+- [x] With IP mode `none` `sessions.ip` is empty, with `anonymized` the last octet is zero (backend test)
+- [x] After user deletion no session, item or frame file is left

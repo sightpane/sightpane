@@ -118,17 +118,24 @@ func (s *Store) ListSessions(f SessionFilter) ([]Session, error) {
 }
 
 type Item struct {
-	ID      int64           `json:"id"`
-	TS      string          `json:"ts"`
-	Type    string          `json:"type"`
-	Name    string          `json:"name"`
-	Body    json.RawMessage `json:"body"`
-	IssueID *int64          `json:"issue_id,omitempty"`
-	Session string          `json:"session_id,omitempty"`
+	ID           int64           `json:"id"`
+	TS           string          `json:"ts"`
+	Type         string          `json:"type"`
+	Name         string          `json:"name"`
+	Body         json.RawMessage `json:"body"`
+	IssueID      *int64          `json:"issue_id,omitempty"`
+	Session      string          `json:"session_id,omitempty"`
 	// Symbolicated is `{"frames":[…]}` for an error from a release build whose
 	// source map was uploaded, and absent otherwise. It sits beside Body rather
 	// than inside it because Body is what the SDK sent, unaltered.
 	Symbolicated json.RawMessage `json:"symbolicated,omitempty"`
+	Platform     string          `json:"platform,omitempty"`
+	Browser      string          `json:"browser,omitempty"`
+	Device       json.RawMessage `json:"device,omitempty"`
+	IP           string          `json:"ip,omitempty"`
+	Release      string          `json:"release,omitempty"`
+	SDKName      string          `json:"sdk_name,omitempty"`
+	SDKVersion   string          `json:"sdk_version,omitempty"`
 }
 
 type Frame struct {
@@ -322,7 +329,8 @@ func (s *Store) ListIssuesWithFilter(f IssueFilter) ([]Issue, error) {
 
 type IssueDetail struct {
 	Issue
-	Occurrences []Item `json:"occurrences"`
+	Occurrences   []Item   `json:"occurrences"`
+	LatestSession *Session `json:"latest_session,omitempty"`
 }
 
 func (s *Store) GetIssue(id int64) (*IssueDetail, error) {
@@ -337,25 +345,45 @@ func (s *Store) GetIssue(id int64) (*IssueDetail, error) {
 	}
 	d := &IssueDetail{Issue: *i, Occurrences: []Item{}}
 	// Include occurrences from this issue and any merged issues
-	rows, err := s.db.Query(`SELECT id, session_id, ts, type, name, body_json, symbolicated_json FROM items WHERE (issue_id=$1 OR issue_id IN (SELECT id FROM issues WHERE merged_into=$1)) AND ts>=$2 ORDER BY ts DESC LIMIT 50`, id, asTime(i.FirstSeen))
+	rows, err := s.db.Query(`
+		SELECT 
+			i.id, i.session_id, i.ts, i.type, i.name, i.body_json, i.symbolicated_json,
+			COALESCE(s.platform, ''), COALESCE(s.browser, ''), COALESCE(s.device_json, '{}'),
+			COALESCE(s.ip, ''), COALESCE(s.release, ''), COALESCE(s.sdk_name, ''), COALESCE(s.sdk_version, '')
+		FROM items i
+		LEFT JOIN sessions s ON s.id = i.session_id
+		WHERE (i.issue_id=$1 OR i.issue_id IN (SELECT id FROM issues WHERE merged_into=$1)) AND i.ts>=$2
+		ORDER BY i.ts DESC LIMIT 50`, id, asTime(i.FirstSeen))
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 	for rows.Next() {
 		var it Item
-		var body string
+		var body, device string
 		var symbolicated sql.NullString
-		if err := rows.Scan(&it.ID, &it.Session, tsCol{&it.TS}, &it.Type, &it.Name, &body, &symbolicated); err != nil {
+		if err := rows.Scan(
+			&it.ID, &it.Session, tsCol{&it.TS}, &it.Type, &it.Name, &body, &symbolicated,
+			&it.Platform, &it.Browser, &device, &it.IP, &it.Release, &it.SDKName, &it.SDKVersion,
+		); err != nil {
 			return nil, err
 		}
 		it.Body = json.RawMessage(body)
+		it.Device = json.RawMessage(device)
 		if symbolicated.Valid {
 			it.Symbolicated = json.RawMessage(symbolicated.String)
 		}
 		d.Occurrences = append(d.Occurrences, it)
 	}
-	return d, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	if len(d.Occurrences) > 0 && d.Occurrences[0].Session != "" {
+		if sess, err := s.GetSession(d.Occurrences[0].Session); err == nil {
+			d.LatestSession = &sess.Session
+		}
+	}
+	return d, nil
 }
 
 func (s *Store) SetIssueResolved(id int64, resolved bool) error {
