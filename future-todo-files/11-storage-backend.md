@@ -49,6 +49,6 @@ Rejected: ClickHouse — overkill for our volume and team size.
 
 ## Acceptance
 
-- [ ] With `SIGHTPANE_FRAMES=s3` frames are written to/read from MinIO; `fs` behaviour is unchanged
-- [ ] `go test ./...` passes with Postgres (when a container is available)
-- [ ] Optional `postgres` + `minio` profiles in Docker compose
+- [x] With `SIGHTPANE_FRAMES=s3` frames are written to/read from MinIO/Ceph; `fs` behaviour is unchanged
+- [x] `go test ./...` passes with Postgres (when a container is available)
+- [x] Optional `postgres` + `minio` + `ceph` profiles in Docker compose
