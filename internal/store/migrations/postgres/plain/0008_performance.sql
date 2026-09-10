@@ -1,0 +1,1 @@
+-- plain postgres: spans remains a standard table

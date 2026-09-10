@@ -50,6 +50,13 @@ type Store struct {
 	// connName is the pgx registration this handle was opened through, kept so
 	// Close can drop it again.
 	connName string
+	// onIssueEvent is called when new or regressed issues are committed by Ingest.
+	onIssueEvent func([]IssueEvent)
+}
+
+// OnIssueEvent registers a callback triggered after ingest commits new or regressed issues.
+func (s *Store) OnIssueEvent(cb func([]IssueEvent)) {
+	s.onIssueEvent = cb
 }
 
 // Frames reports which frame backend is in use, for logs and /health.

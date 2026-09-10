@@ -48,6 +48,14 @@ const (
 	CodeUnknownKey     = "envelope.unknown_key"
 	CodeEnvelopeTooBig = "envelope.too_large"
 	CodeEnvelopeBad    = "envelope.invalid"
+
+	CodeAlertChannelNotFound = "alert_channel.not_found"
+	CodeAlertRuleNotFound    = "alert_rule.not_found"
+	CodeAlertChannelInvalid  = "alert_channel.invalid"
+	CodeAlertRuleInvalid     = "alert_rule.invalid"
+	CodeAlertSendFailed      = "alert.send_failed"
+
+	CodeSearchInvalid = "search.invalid_query"
 )
 
 // Error carries an HTTP status, a stable code and an English message.

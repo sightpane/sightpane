@@ -67,7 +67,7 @@ sampling (`SightpaneOptions.tracesSampleRate`) — see 08.
 
 ## Acceptance
 
-- [ ] Route load, gRPC/HTTP and app start transactions are listed in the dashboard with p50/p95
-- [ ] You can go from a transaction's slowest sample to the session recording
-- [ ] Older SDK envelopes are unaffected; against a backend that does not know `span`, the SDK can turn it off via `beforeSend`
-- [ ] SDK: transaction lifecycle in `hog_test.dart`; backend: a percentile test with literal values
+- [x] Route load, gRPC/HTTP and app start transactions are listed in the dashboard with p50/p95
+- [x] You can go from a transaction's slowest sample to the session recording
+- [x] Older SDK envelopes are unaffected; against a backend that does not know `span`, the SDK can turn it off via `beforeSend`
+- [x] SDK: transaction lifecycle in `hog_test.dart`; backend: a percentile test with literal values

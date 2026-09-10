@@ -17,7 +17,9 @@ import (
 	"github.com/gofiber/fiber/v3/middleware/recover"
 	"github.com/gofiber/fiber/v3/middleware/static"
 
+	"sightpane/internal/alert"
 	"sightpane/internal/apierr"
+	"sightpane/internal/config"
 	"sightpane/internal/store"
 )
 
@@ -39,7 +41,8 @@ const SourceURL = "https://github.com/sightpane/sightpane"
 const userKey = "sightpane_user"
 
 type Server struct {
-	store *store.Store
+	store    *store.Store
+	notifier *alert.Notifier
 	// ui serves the dashboard: a directory when SIGHTPANE_UI_DIR is set, otherwise
 	// the small embedded placeholder page.
 	ui fiber.Handler
@@ -48,8 +51,12 @@ type Server struct {
 // New builds the Fiber app. [uiDir] wins when non-empty; [embedded] is the
 // fallback filesystem compiled into the binary. Either may be absent, in which
 // case only the API is served.
-func New(st *store.Store, uiDir string, embedded fs.FS) *fiber.App {
-	s := &Server{store: st, ui: uiHandler(uiDir, embedded)}
+func New(st *store.Store, notifier *alert.Notifier, uiDir string, embedded fs.FS) *fiber.App {
+	if notifier == nil {
+		notifier = alert.NewNotifier(st, config.Config{PublicURL: "http://localhost:8790"})
+	}
+	st.OnIssueEvent(notifier.Enqueue)
+	s := &Server{store: st, notifier: notifier, ui: uiHandler(uiDir, embedded)}
 
 	app := fiber.New(fiber.Config{
 		AppName: "sightpane",
@@ -108,13 +115,29 @@ func New(st *store.Store, uiDir string, embedded fs.FS) *fiber.App {
 	api.Get("/projects/:id/issues", s.requireProject(roleMember), s.listIssues)
 	api.Get("/projects/:id/events/summary", s.requireProject(roleMember), s.eventSummary)
 
-	// Release artifacts. Uploading is an owner action with a user token: a
-	// source map is a build output, not something the app posts with its key.
-	// A release name goes in the path, so one containing a slash has to be
-	// percent-encoded by the caller.
-	api.Get("/projects/:id/releases", s.requireProject(roleMember), s.listReleaseArtifacts)
+	// Alerts and notification channels (owner only).
+	api.Get("/projects/:id/alert-channels", s.requireProject(roleOwner), s.listAlertChannels)
+	api.Post("/projects/:id/alert-channels", s.requireProject(roleOwner), s.createAlertChannel)
+	api.Patch("/projects/:id/alert-channels/:cid", s.requireProject(roleOwner), s.updateAlertChannel)
+	api.Delete("/projects/:id/alert-channels/:cid", s.requireProject(roleOwner), s.deleteAlertChannel)
+	api.Post("/projects/:id/alert-channels/:cid/test", s.requireProject(roleOwner), s.testAlertChannel)
+	api.Get("/projects/:id/alerts", s.requireProject(roleOwner), s.listAlertRules)
+	api.Post("/projects/:id/alerts", s.requireProject(roleOwner), s.createAlertRule)
+	api.Patch("/projects/:id/alerts/:rid", s.requireProject(roleOwner), s.updateAlertRule)
+	api.Delete("/projects/:id/alerts/:rid", s.requireProject(roleOwner), s.deleteAlertRule)
+
+	// Releases and release artifacts.
+	api.Get("/projects/:id/releases", s.requireProject(roleMember), s.listReleases)
+	api.Get("/projects/:id/releases/:release", s.requireProject(roleMember), s.getRelease)
+	api.Get("/projects/:id/release-artifacts", s.requireProject(roleMember), s.listReleaseArtifacts)
 	api.Post("/projects/:id/releases/:release/sourcemaps", s.requireProject(roleOwner), s.uploadSourceMap)
 	api.Delete("/projects/:id/releases/:release/artifacts/:filename", s.requireProject(roleOwner), s.deleteReleaseArtifact)
+
+	// Performance monitoring.
+	api.Get("/projects/:id/performance", s.requireProject(roleMember), s.getPerformanceSummary)
+	api.Get("/projects/:id/performance/detail", s.requireProject(roleMember), s.getTransactionDetail)
+	api.Get("/projects/:id/performance/transactions/*", s.requireProject(roleMember), s.getTransactionDetail)
+
 
 	// Session and issue details are addressed globally, so each one resolves its
 	// own project before checking membership.
@@ -122,6 +145,17 @@ func New(st *store.Store, uiDir string, embedded fs.FS) *fiber.App {
 	api.Get("/sessions/:id/frames/:seq", s.requireAuth, s.getFrame)
 	api.Get("/issues/:id", s.requireAuth, s.getIssue)
 	api.Post("/issues/:id/resolve", s.requireAuth, s.resolveIssue)
+	api.Post("/issues/:id/assign", s.requireAuth, s.assignIssue)
+	api.Post("/issues/:id/status", s.requireAuth, s.setIssueStatus)
+	api.Post("/issues/:id/snooze", s.requireAuth, s.snoozeIssue)
+	api.Post("/issues/:id/merge", s.requireAuth, s.mergeIssue)
+	api.Get("/issues/:id/comments", s.requireAuth, s.listIssueComments)
+	api.Post("/issues/:id/comments", s.requireAuth, s.addIssueComment)
+
+	// Fingerprint rules
+	api.Get("/projects/:id/fingerprint-rules", s.requireProject(roleMember), s.listFingerprintRules)
+	api.Post("/projects/:id/fingerprint-rules", s.requireProject(roleOwner), s.createFingerprintRule)
+	api.Delete("/projects/:id/fingerprint-rules/:ruleId", s.requireProject(roleOwner), s.deleteFingerprintRule)
 
 	// The dashboard is last so it never shadows an API route.
 	if s.ui != nil {

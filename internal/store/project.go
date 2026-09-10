@@ -99,6 +99,23 @@ func (s *Store) ProjectByID(id int64) (*Project, error) {
 	return p, nil
 }
 
+func (s *Store) ListAllProjects() ([]Project, error) {
+	rows, err := s.db.Query(`SELECT ` + projectCols + ` FROM projects ORDER BY id`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []Project{}
+	for rows.Next() {
+		p, err := scanProject(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, *p)
+	}
+	return out, rows.Err()
+}
+
 func (s *Store) fillProjectCounters(p *Project) {
 	// A rolling 24 hours, not the last calendar day, so this counts raw items:
 	// the daily aggregate cannot answer a window that starts inside a bucket.
@@ -184,6 +201,7 @@ func (s *Store) DeleteProject(id int64) error {
 		`DELETE FROM release_artifacts WHERE project_id=$1`,
 		`DELETE FROM frames WHERE session_id IN (SELECT id FROM sessions WHERE project_id=$1)`,
 		`DELETE FROM items WHERE project_id=$1`,
+		`DELETE FROM spans WHERE project_id=$1`,
 		`DELETE FROM issues WHERE project_id=$1`,
 		`DELETE FROM sessions WHERE project_id=$1`,
 		`DELETE FROM project_members WHERE project_id=$1`,

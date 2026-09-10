@@ -49,6 +49,8 @@ type SessionFilter struct {
 	UserID     string
 	OnlyErrors bool
 	Limit      int
+	Query      string
+	Cursor     string
 }
 
 const sessionCols = `id, project_id, started_at, last_seen_at, ended_at, user_id, user_json, device_json, props_json, platform, release, error_count, event_count, frame_count, ip, browser, visitor_key, current_route`
@@ -77,6 +79,20 @@ func (s *Store) ListSessions(f SessionFilter) ([]Session, error) {
 	}
 	if f.OnlyErrors {
 		q += ` AND error_count>0`
+	}
+	if f.Cursor != "" {
+		if t, err := time.Parse(time.RFC3339Nano, f.Cursor); err == nil {
+			q += ` AND last_seen_at < ` + next(t)
+		} else if t, err := time.Parse(time.RFC3339, f.Cursor); err == nil {
+			q += ` AND last_seen_at < ` + next(t)
+		}
+	}
+	if f.Query != "" {
+		whereClause, err := BuildSessionSearchWhere(f.Query, next)
+		if err != nil {
+			return nil, err
+		}
+		q += whereClause
 	}
 	limit := f.Limit
 	if limit <= 0 || limit > 500 {
@@ -196,34 +212,104 @@ func (s *Store) FrameReader(ctx context.Context, sessionID string, seq int) (io.
 }
 
 type Issue struct {
-	ID          int64  `json:"id"`
-	ProjectID   int64  `json:"project_id"`
-	Fingerprint string `json:"fingerprint"`
-	Title       string `json:"title"`
-	Exception   string `json:"exception"`
-	FirstSeen   string `json:"first_seen"`
-	LastSeen    string `json:"last_seen"`
-	Count       int    `json:"count"`
-	Resolved    bool   `json:"resolved"`
+	ID                   int64      `json:"id"`
+	ProjectID            int64      `json:"project_id"`
+	Fingerprint          string     `json:"fingerprint"`
+	Title                string     `json:"title"`
+	Exception            string     `json:"exception"`
+	FirstSeen            string     `json:"first_seen"`
+	LastSeen             string     `json:"last_seen"`
+	Count                int        `json:"count"`
+	Resolved             bool       `json:"resolved"`
+	Status               string     `json:"status"`
+	AssigneeUserID       *int64     `json:"assignee_user_id,omitempty"`
+	AssigneeEmail        string     `json:"assignee_email,omitempty"`
+	SnoozeUntil          *time.Time `json:"snooze_until,omitempty"`
+	SnoozeCountThreshold int        `json:"snooze_count_threshold,omitempty"`
+	MergedInto           *int64     `json:"merged_into,omitempty"`
+	FirstRelease         string     `json:"first_release,omitempty"`
+	LastRelease          string     `json:"last_release,omitempty"`
+	ResolvedInRelease    string     `json:"resolved_in_release,omitempty"`
+}
+
+const issueCols = `i.id, i.project_id, i.fingerprint, i.title, i.exception, i.first_seen, i.last_seen, i.count, i.resolved, i.status, i.assignee_user_id, u.email, i.snooze_until, i.snooze_count_threshold, i.merged_into, i.first_release, i.last_release, i.resolved_in_release`
+
+func scanIssue(sc interface{ Scan(...any) error }) (*Issue, error) {
+	var i Issue
+	var assigneeEmail sql.NullString
+	var snoozeUntil *time.Time
+	if err := sc.Scan(&i.ID, &i.ProjectID, &i.Fingerprint, &i.Title, &i.Exception, tsCol{&i.FirstSeen}, tsCol{&i.LastSeen}, &i.Count, &i.Resolved, &i.Status, &i.AssigneeUserID, &assigneeEmail, &snoozeUntil, &i.SnoozeCountThreshold, &i.MergedInto, &i.FirstRelease, &i.LastRelease, &i.ResolvedInRelease); err != nil {
+		return nil, err
+	}
+	if assigneeEmail.Valid {
+		i.AssigneeEmail = assigneeEmail.String
+	}
+	i.SnoozeUntil = snoozeUntil
+	if i.Status == "" {
+		if i.Resolved {
+			i.Status = "resolved"
+		} else {
+			i.Status = "open"
+		}
+	}
+	i.Resolved = (i.Status == "resolved")
+	return &i, nil
+}
+
+
+type IssueFilter struct {
+	ProjectID       int64
+	IncludeResolved bool
+	Status          string
+	Query           string
+	Limit           int
 }
 
 func (s *Store) ListIssues(projectID int64, includeResolved bool) ([]Issue, error) {
-	q := `SELECT id, project_id, fingerprint, title, exception, first_seen, last_seen, count, resolved FROM issues WHERE project_id=$1`
-	if !includeResolved {
-		q += ` AND NOT resolved`
+	return s.ListIssuesWithFilter(IssueFilter{
+		ProjectID:       projectID,
+		IncludeResolved: includeResolved,
+	})
+}
+
+func (s *Store) ListIssuesWithFilter(f IssueFilter) ([]Issue, error) {
+	q := `SELECT ` + issueCols + ` FROM issues i LEFT JOIN users u ON u.id = i.assignee_user_id WHERE i.project_id=$1`
+	args := []any{f.ProjectID}
+	next := func(v any) string {
+		args = append(args, v)
+		return "$" + strconv.Itoa(len(args))
 	}
-	rows, err := s.db.Query(q+` ORDER BY last_seen DESC LIMIT 500`, projectID)
+	if f.Status != "" {
+		q += ` AND i.status = ` + next(f.Status)
+	} else if !f.IncludeResolved && !strings.Contains(f.Query, "status:") {
+		q += ` AND i.status = 'open'`
+	} else if f.IncludeResolved && !strings.Contains(f.Query, "status:") {
+		q += ` AND i.status != 'ignored'`
+	}
+	if f.Query != "" {
+		whereClause, err := BuildIssueSearchWhere(f.Query, next)
+		if err != nil {
+			return nil, err
+		}
+		q += whereClause
+	}
+	limit := f.Limit
+	if limit <= 0 || limit > 500 {
+		limit = 500
+	}
+	q += ` ORDER BY i.last_seen DESC LIMIT ` + next(limit)
+	rows, err := s.db.Query(q, args...)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 	out := []Issue{}
 	for rows.Next() {
-		var i Issue
-		if err := rows.Scan(&i.ID, &i.ProjectID, &i.Fingerprint, &i.Title, &i.Exception, tsCol{&i.FirstSeen}, tsCol{&i.LastSeen}, &i.Count, &i.Resolved); err != nil {
+		i, err := scanIssue(rows)
+		if err != nil {
 			return nil, err
 		}
-		out = append(out, i)
+		out = append(out, *i)
 	}
 	return out, rows.Err()
 }
@@ -234,21 +320,18 @@ type IssueDetail struct {
 }
 
 func (s *Store) GetIssue(id int64) (*IssueDetail, error) {
-	var i Issue
-	err := s.db.QueryRow(`SELECT id, project_id, fingerprint, title, exception, first_seen, last_seen, count, resolved FROM issues WHERE id=$1`, id).
-		Scan(&i.ID, &i.ProjectID, &i.Fingerprint, &i.Title, &i.Exception, tsCol{&i.FirstSeen}, tsCol{&i.LastSeen}, &i.Count, &i.Resolved)
+	q := `SELECT ` + issueCols + ` FROM issues i LEFT JOIN users u ON u.id = i.assignee_user_id WHERE i.id=$1`
+	row := s.db.QueryRow(q, id)
+	i, err := scanIssue(row)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
 	}
 	if err != nil {
 		return nil, err
 	}
-	d := &IssueDetail{Issue: i, Occurrences: []Item{}}
-	// The lower bound is the issue's own first_seen. It excludes nothing that
-	// could match — an occurrence cannot predate the issue — and it is what lets
-	// a hypertable skip every chunk older than the issue instead of scanning the
-	// whole history to satisfy ORDER BY ts DESC.
-	rows, err := s.db.Query(`SELECT id, session_id, ts, type, name, body_json, symbolicated_json FROM items WHERE issue_id=$1 AND ts>=$2 ORDER BY ts DESC LIMIT 50`, id, asTime(i.FirstSeen))
+	d := &IssueDetail{Issue: *i, Occurrences: []Item{}}
+	// Include occurrences from this issue and any merged issues
+	rows, err := s.db.Query(`SELECT id, session_id, ts, type, name, body_json, symbolicated_json FROM items WHERE (issue_id=$1 OR issue_id IN (SELECT id FROM issues WHERE merged_into=$1)) AND ts>=$2 ORDER BY ts DESC LIMIT 50`, id, asTime(i.FirstSeen))
 	if err != nil {
 		return nil, err
 	}
@@ -270,7 +353,25 @@ func (s *Store) GetIssue(id int64) (*IssueDetail, error) {
 }
 
 func (s *Store) SetIssueResolved(id int64, resolved bool) error {
-	res, err := s.db.Exec(`UPDATE issues SET resolved=$1 WHERE id=$2`, resolved, id)
+	return s.SetIssueResolvedWithRelease(id, resolved, "")
+}
+
+func (s *Store) SetIssueResolvedWithRelease(id int64, resolved bool, release string) error {
+	status := "open"
+	if resolved {
+		status = "resolved"
+	}
+	var res sql.Result
+	var err error
+	if resolved {
+		if release != "" {
+			res, err = s.db.Exec(`UPDATE issues SET status=$1, resolved=$2, resolved_in_release=$3 WHERE id=$4`, status, resolved, release, id)
+		} else {
+			res, err = s.db.Exec(`UPDATE issues SET status=$1, resolved=$2, resolved_in_release=COALESCE(NULLIF(last_release, ''), resolved_in_release) WHERE id=$3`, status, resolved, id)
+		}
+	} else {
+		res, err = s.db.Exec(`UPDATE issues SET status=$1, resolved=$2 WHERE id=$3`, status, resolved, id)
+	}
 	if err != nil {
 		return err
 	}
@@ -279,6 +380,7 @@ func (s *Store) SetIssueResolved(id int64, resolved bool) error {
 	}
 	return nil
 }
+
 
 type EventCount struct {
 	Name  string `json:"name"`

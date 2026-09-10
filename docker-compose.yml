@@ -33,8 +33,16 @@ services:
       SIGHTPANE_S3_BUCKET: "${SIGHTPANE_S3_BUCKET:-sightpane-frames}"
       SIGHTPANE_S3_ACCESS_KEY: "${SIGHTPANE_S3_ACCESS_KEY:-}"
       SIGHTPANE_S3_SECRET_KEY: "${SIGHTPANE_S3_SECRET_KEY:-}"
+      # Alerts & notifications (SMTP & public URL for links):
+      SIGHTPANE_PUBLIC_URL: "${SIGHTPANE_PUBLIC_URL:-}"
+      SIGHTPANE_SMTP_HOST: "${SIGHTPANE_SMTP_HOST:-}"
+      SIGHTPANE_SMTP_PORT: "${SIGHTPANE_SMTP_PORT:-587}"
+      SIGHTPANE_SMTP_USER: "${SIGHTPANE_SMTP_USER:-}"
+      SIGHTPANE_SMTP_PASS: "${SIGHTPANE_SMTP_PASS:-}"
+      SIGHTPANE_SMTP_FROM: "${SIGHTPANE_SMTP_FROM:-no-reply@sightpane.local}"
     volumes:
       - sightpane-data:/data # the frame PNGs, when SIGHTPANE_FRAMES=fs
+      - ../ui/build/web:/app/ui:ro
     restart: unless-stopped
     # For the real client IP: put this behind a reverse proxy that sends
     # X-Forwarded-For / X-Real-IP (the backend reads those headers), or use

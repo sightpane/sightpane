@@ -81,6 +81,12 @@ no `ALTER` list to keep in step any more.
 | `SIGHTPANE_S3_REGION` / `SIGHTPANE_S3_USE_SSL` | empty | region only matters when the zonegroup has one; set `SIGHTPANE_S3_USE_SSL` to anything for HTTPS |
 | `SIGHTPANE_PROXY_PROTOCOL` | empty | `1` makes the listener read a PROXY protocol (v1/v2) header — for layer-4 proxies (caddy-l4, HAProxy) |
 | `SIGHTPANE_TRUSTED_PROXIES` | empty | comma-separated IPs/CIDRs; when set, the PROXY header is honoured only for connections from those peers |
+| `SIGHTPANE_PUBLIC_URL` | empty | public base URL used in notification email/slack/webhook links (e.g. `https://sightpane.company.com`) |
+| `SIGHTPANE_SMTP_HOST` / `SMTP_HOST` | empty | SMTP server host for email notifications (e.g. `smtp.sendgrid.net`, `smtp.mailgun.org`) |
+| `SIGHTPANE_SMTP_PORT` / `SMTP_PORT` | `587` | SMTP server port |
+| `SIGHTPANE_SMTP_USER` / `SMTP_USER` | empty | SMTP authentication username |
+| `SIGHTPANE_SMTP_PASS` / `SMTP_PASS` | empty | SMTP authentication password |
+| `SIGHTPANE_SMTP_FROM` / `SMTP_FROM` | `no-reply@sightpane.local` | sender address on notification emails |
 | `SIGHTPANE_TEST_DB` | empty | tests only: a database to use instead of the container they otherwise start themselves |
 
 ### Tests
@@ -222,6 +228,8 @@ contract — the dashboard picks its translation from it
 | `auth.unsupported_locale` | 400 | `PATCH /auth/me` with an unknown language |
 | `project.not_found` · `project.owner_required` · `project.name_required` | 404 / 403 / 400 | projects |
 | `member.unknown_email` · `member.owner_self_remove` | 404 / 400 | membership |
+| `alert_channel.not_found` · `alert_channel.invalid` | 404 / 400 | notification channels |
+| `alert_rule.not_found` · `alert_rule.invalid` · `alert.send_failed` | 404 / 400 / 502 | alert rules & test delivery |
 | `session.not_found` · `frame.not_found` · `issue.not_found` | 404 | detail endpoints |
 | `envelope.key_required` · `envelope.unknown_key` · `envelope.too_large` · `envelope.invalid` | 401 / 413 / 400 | SDK ingest |
 | `bad_json` · `not_found` · `internal` | 400 / 404 / 500 | general |
@@ -278,7 +286,47 @@ every issue ever recorded. That is a decision, not an oversight.
 CORS is open to every origin (Flutter web posts from another port). The envelope
 limit is 32 MB and a source map upload 96 MB. Requests that are not files and not under `/api/` are answered
 with the dashboard's `index.html`, because it is a single-page app; `/api/` paths
-keep returning a JSON 404.
+### Alerts & Notifications
+
+Sightpane supports automated alerts triggered on issue occurrences and error rate spikes:
+
+- **Event Kinds**:
+  - `new_issue`: Triggered the very first time an exception/fingerprint group is ingested.
+  - `regression`: Triggered when an issue that was previously marked resolved is seen again.
+  - `rate_spike`: Triggered when the count of error items exceeds `threshold` in the last `window_minutes` minutes.
+  - `crash_free_drop`: Triggered when the percentage of crash-free sessions falls below `threshold`% in the last `window_minutes` minutes.
+
+- **Notification Channels**:
+  - `email`: Plaintext email sent via SMTP (`net/smtp`), including issue title, event details, error count, and a direct link to the dashboard issue page.
+  - `slack`: Incoming webhook payload formatted with message blocks, issue summary, and action links.
+  - `webhook`: Generic HTTP POST with standard JSON payload:
+    ```json
+    {
+      "event": "alert",
+      "project_id": 1,
+      "rule": {"id": 1, "name": "New Issues Alert", "kind": "new_issue"},
+      "channel": {"id": 1, "name": "Ops Webhook", "kind": "webhook"},
+      "issue": {"id": 42, "title": "Database connection timeout", "exception": "TimeoutException"},
+      "timestamp": "2026-09-09T20:00:00Z"
+    }
+    ```
+    When a channel secret is configured, requests include the `X-Sightpane-Signature: sha256=<hex>` header (HMAC-SHA256 of the raw JSON body using the shared secret).
+
+- **Deduplication & Cooldown**:
+  - `new_issue` and `regression` alerts are deduplicated per issue ID in `alert_deliveries`.
+  - Rate-based rules enforce a cooldown window to prevent notification spam during sustained outages.
+
+| Endpoint | |
+|---|---|
+| `GET /api/v1/projects/{id}/alert-channels` | List configured notification channels (owner only) |
+| `POST /api/v1/projects/{id}/alert-channels` | Create a new channel (owner only) |
+| `PATCH /api/v1/projects/{id}/alert-channels/{channelId}` | Update an existing channel (owner only) |
+| `DELETE /api/v1/projects/{id}/alert-channels/{channelId}` | Delete a channel (owner only) |
+| `POST /api/v1/projects/{id}/alert-channels/{channelId}/test` | Send a test notification (owner only) |
+| `GET /api/v1/projects/{id}/alerts` | List configured alert rules (owner only) |
+| `POST /api/v1/projects/{id}/alerts` | Create an alert rule (owner only) |
+| `PATCH /api/v1/projects/{id}/alerts/{ruleId}` | Update an alert rule (toggle enabled, change channels/thresholds) |
+| `DELETE /api/v1/projects/{id}/alerts/{ruleId}` | Delete an alert rule (owner only) |
 
 ## Docker
 

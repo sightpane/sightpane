@@ -7,7 +7,9 @@ package store
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"time"
 
@@ -51,6 +53,27 @@ type itemHead struct {
 	// JavaScript that the backend can map back to Dart with an uploaded source
 	// map. An SDK that does not send it loses nothing: `stack` is unchanged.
 	Frames []symbol.Frame `json:"frames"`
+
+	// Spans and transactions for performance monitoring
+	Op           string          `json:"op"`
+	DurationMs   float64         `json:"duration_ms"`
+	Status       string          `json:"status"`
+	ParentSpanID string          `json:"parent_span_id"`
+	SpanID       string          `json:"span_id"`
+	TraceID      string          `json:"trace_id"`
+	Tags         json.RawMessage `json:"tags"`
+	Spans        []spanChild     `json:"spans"`
+}
+
+type spanChild struct {
+	Op           string          `json:"op"`
+	Name         string          `json:"name"`
+	TS           string          `json:"ts"`
+	DurationMs   float64         `json:"duration_ms"`
+	Status       string          `json:"status"`
+	ParentSpanID string          `json:"parent_span_id"`
+	SpanID       string          `json:"span_id"`
+	Tags         json.RawMessage `json:"tags"`
 }
 
 type IngestResult struct {
@@ -173,8 +196,18 @@ func (s *Store) Ingest(ctx context.Context, projectID int64, env *Envelope, ip s
 		return nil, err
 	}
 
+	if d.Release != "" {
+		_, _ = tx.Exec(`
+			INSERT INTO project_releases(project_id, version, first_seen, last_seen, session_count)
+			VALUES($1, $2, $3, $4, 1)
+			ON CONFLICT(project_id, version) DO UPDATE SET
+				last_seen = GREATEST(project_releases.last_seen, EXCLUDED.last_seen)`,
+			projectID, d.Release, started, now)
+	}
+
 	res := &IngestResult{}
 	var errs, events, frames int
+	var issueEvents []IssueEvent
 	for i, raw := range env.Items {
 		h := heads[i]
 		if h == nil {
@@ -212,17 +245,117 @@ func (s *Store) Ingest(ctx context.Context, projectID int64, env *Envelope, ip s
 				}
 			}
 			fp, title := fingerprintOf(h.Exception, h.Message, h.Stack, resolved)
-			// RETURNING on the upsert: the id of the row that was inserted or
-			// the one that was updated, without a second lookup.
+
+			// Check fingerprint rules for the project
+			rules, _ := s.ListFingerprintRules(projectID)
+			matchedRule := MatchFingerprintRule(rules, h.Exception, h.Message, h.Stack)
+			if matchedRule != nil && matchedRule.Action == "group_as" && matchedRule.GroupFingerprint != "" {
+				fp = matchedRule.GroupFingerprint
+			}
+
+			// Determine existing issue status and snooze/ignore/regression behavior
+			var prevStatus string
+			var prevSnoozeUntil *time.Time
+			var prevSnoozeThreshold, prevSnoozeStart, prevCount int
+			var prevFirstRelease, prevLastRelease, prevResolvedInRelease string
+			err := tx.QueryRow(`
+				SELECT status, snooze_until, snooze_count_threshold, snooze_start_count, count,
+				       COALESCE(first_release, ''), COALESCE(last_release, ''), COALESCE(resolved_in_release, '')
+				FROM issues WHERE project_id=$1 AND fingerprint=$2`,
+				projectID, fp,
+			).Scan(&prevStatus, &prevSnoozeUntil, &prevSnoozeThreshold, &prevSnoozeStart, &prevCount,
+				&prevFirstRelease, &prevLastRelease, &prevResolvedInRelease)
+
+			var eventKind string
+			targetStatus := "open"
+			if matchedRule != nil && matchedRule.Action == "ignore" {
+				targetStatus = "ignored"
+			}
+
+			if errors.Is(err, sql.ErrNoRows) {
+				if targetStatus != "ignored" {
+					eventKind = "new_issue"
+				}
+			} else if err == nil {
+				if prevStatus == "ignored" {
+					targetStatus = "ignored"
+				} else if prevStatus == "snoozed" {
+					woken := false
+					if prevSnoozeUntil != nil && !ts.Before(*prevSnoozeUntil) {
+						woken = true
+					}
+					if prevSnoozeThreshold > 0 && (prevCount+1-prevSnoozeStart) >= prevSnoozeThreshold {
+						woken = true
+					}
+					if woken {
+						targetStatus = "open"
+						eventKind = "regression"
+					} else {
+						targetStatus = "snoozed"
+					}
+				} else if prevStatus == "resolved" {
+					if prevResolvedInRelease != "" && d.Release != "" {
+						if CompareVersions(d.Release, prevResolvedInRelease) < 0 {
+							// Older release: do not regress!
+							targetStatus = "resolved"
+						} else {
+							// Same or newer release: regressed!
+							targetStatus = "open"
+							eventKind = "regression"
+						}
+					} else {
+						targetStatus = "open"
+						eventKind = "regression"
+					}
+				} else {
+
+					targetStatus = prevStatus
+				}
+			}
+
+			// Upsert issue with updated status and release tracking
 			var issueID int64
-			if err := tx.QueryRow(`INSERT INTO issues(project_id, fingerprint, title, exception, first_seen, last_seen, count) VALUES($1,$2,$3,$4,$5,$6,1)
-				ON CONFLICT(project_id, fingerprint) DO UPDATE SET last_seen=excluded.last_seen, count=issues.count+1, resolved=FALSE
-				RETURNING id`, projectID, fp, title, h.Exception, ts, ts).Scan(&issueID); err != nil {
+			var newCount int
+			firstRel := d.Release
+			lastRel := d.Release
+			if prevFirstRelease != "" {
+				firstRel = prevFirstRelease
+			}
+			if lastRel == "" {
+				lastRel = prevLastRelease
+			}
+
+			if err := tx.QueryRow(`INSERT INTO issues(project_id, fingerprint, title, exception, first_seen, last_seen, count, status, resolved, first_release, last_release)
+				VALUES($1,$2,$3,$4,$5,$6,1,$7,$8,$9,$10)
+				ON CONFLICT(project_id, fingerprint) DO UPDATE SET
+					last_seen=excluded.last_seen,
+					count=issues.count+1,
+					status=$7,
+					resolved=$8,
+					first_release=CASE WHEN issues.first_release='' THEN excluded.first_release ELSE issues.first_release END,
+					last_release=CASE WHEN excluded.last_release!='' THEN excluded.last_release ELSE issues.last_release END
+				RETURNING id, count`, projectID, fp, title, h.Exception, ts, ts, targetStatus, targetStatus == "resolved", firstRel, lastRel).Scan(&issueID, &newCount); err != nil {
 				return nil, err
 			}
+
 			if _, err := tx.Exec(`INSERT INTO items(session_id, project_id, ts, type, name, body_json, issue_id, symbolicated_json) VALUES($1,$2,$3,$4,$5,$6,$7,$8)`,
 				env.Session.ID, projectID, ts, "error", title, string(raw), issueID, symbolicated); err != nil {
 				return nil, err
+			}
+			if eventKind != "" {
+				issueEvents = append(issueEvents, IssueEvent{
+					ProjectID:   projectID,
+					IssueID:     issueID,
+					Fingerprint: fp,
+					Title:       title,
+					Exception:   h.Exception,
+					Kind:        eventKind,
+					Count:       newCount,
+					FirstSeen:   ts,
+					LastSeen:    ts,
+					Route:       route,
+					Browser:     browser,
+				})
 			}
 			errs++
 		case "session_end":
@@ -250,6 +383,47 @@ func (s *Store) Ingest(ctx context.Context, projectID int64, env *Envelope, ip s
 			if h.Type == "event" {
 				events++
 			}
+		case "transaction", "span":
+			op := h.Op
+			if op == "" {
+				op = "custom"
+			}
+			name := h.Name
+			dur := h.DurationMs
+			status := h.Status
+			if status == "" {
+				status = "ok"
+			}
+			tags := rawOr(h.Tags, "{}")
+			if _, err := tx.Exec(`INSERT INTO spans(project_id, session_id, ts, op, name, duration_ms, status, parent_span_id, span_id, trace_id, tags_json)
+				VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
+				projectID, env.Session.ID, ts, op, name, dur, status, h.ParentSpanID, h.SpanID, h.TraceID, tags); err != nil {
+				return nil, err
+			}
+			for _, child := range h.Spans {
+				childTS := parseTS(child.TS, ts)
+				childOp := child.Op
+				if childOp == "" {
+					childOp = op
+				}
+				childStatus := child.Status
+				if childStatus == "" {
+					childStatus = "ok"
+				}
+				childParent := child.ParentSpanID
+				if childParent == "" {
+					childParent = h.SpanID
+				}
+				childTags := rawOr(child.Tags, "{}")
+				if _, err := tx.Exec(`INSERT INTO spans(project_id, session_id, ts, op, name, duration_ms, status, parent_span_id, span_id, trace_id, tags_json)
+					VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
+					projectID, env.Session.ID, childTS, childOp, child.Name, child.DurationMs, childStatus, childParent, child.SpanID, h.TraceID, childTags); err != nil {
+					return nil, err
+				}
+			}
+			if _, err := tx.Exec(`INSERT INTO items(session_id, project_id, ts, type, name, body_json) VALUES($1,$2,$3,$4,$5,$6)`, env.Session.ID, projectID, ts, h.Type, name, string(raw)); err != nil {
+				return nil, err
+			}
 		default:
 			res.Rejected++
 			continue
@@ -259,7 +433,13 @@ func (s *Store) Ingest(ctx context.Context, projectID int64, env *Envelope, ip s
 	if _, err := tx.Exec(`UPDATE sessions SET error_count=error_count+$1, event_count=event_count+$2, frame_count=frame_count+$3 WHERE id=$4`, errs, events, frames, env.Session.ID); err != nil {
 		return nil, err
 	}
-	return res, tx.Commit()
+	if err := tx.Commit(); err != nil {
+		return nil, err
+	}
+	if len(issueEvents) > 0 && s.onIssueEvent != nil {
+		s.onIssueEvent(issueEvents)
+	}
+	return res, nil
 }
 
 func rawOr(r json.RawMessage, def string) string {

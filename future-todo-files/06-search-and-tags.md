@@ -45,7 +45,7 @@ Firefox users at the NOVO location" cannot be answered today.
 
 ## Acceptance
 
-- [ ] `q=` supports at least release/platform/browser/route/user/props.*/after/before
-- [ ] A wrong key returns 400 and a readable error in the dashboard
-- [ ] Query tests assert against result sets on real SQLite, not against literal expected SQL
-- [ ] Pagination (`cursor`) is added; the 500-row limit is kept
+- [x] `q=` supports at least release/platform/browser/route/user/props.*/after/before
+- [x] A wrong key returns 400 and a readable error in the dashboard
+- [x] Query tests assert against result sets on real SQLite, not against literal expected SQL
+- [x] Pagination (`cursor`) is added; the 500-row limit is kept

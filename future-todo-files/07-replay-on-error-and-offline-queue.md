@@ -54,7 +54,7 @@ error you most want (the app crashing).
 
 ## Acceptance
 
-- [ ] In `onError` mode no frames are sent when there is no error; when one happens the last 30 s of frames go out (test: fake clock)
-- [ ] Persistent queue: simulate a shutdown → `Sightpane.init` again → the pending error is sent
-- [ ] `always` mode behaves exactly as it does today (existing tests pass)
-- [ ] README "Limits" is updated
+- [x] In `onError` mode no frames are sent when there is no error; when one happens the last 30 s of frames go out (test: fake clock)
+- [x] Persistent queue: simulate a shutdown → `Sightpane.init` again → the pending error is sent
+- [x] `always` mode behaves exactly as it does today (existing tests pass)
+- [x] README "Limits" is updated

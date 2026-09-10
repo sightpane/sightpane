@@ -64,9 +64,32 @@ func (s *Server) listReleaseArtifacts(c fiber.Ctx) error {
 	return c.JSON(as)
 }
 
+// listReleases handles GET /projects/:id/releases
+// If ?artifacts=true or ?release=... is requested, it serves the release artifacts list.
+// Otherwise it serves the release health list.
+func (s *Server) listReleases(c fiber.Ctx) error {
+	if c.Query("artifacts") == "1" || c.Query("artifacts") == "true" || c.Query("release") != "" {
+		return s.listReleaseArtifacts(c)
+	}
+	releases, err := s.store.ListReleases(c.Context(), pathID(c, "id"))
+	if err != nil {
+		return err
+	}
+	return c.JSON(releases)
+}
+
+func (s *Server) getRelease(c fiber.Ctx) error {
+	rel, err := s.store.GetReleaseHealth(c.Context(), pathID(c, "id"), c.Params("release"))
+	if err != nil {
+		return apierr.New(fiber.StatusNotFound, apierr.CodeNotFound, "release not found")
+	}
+	return c.JSON(rel)
+}
+
 func (s *Server) deleteReleaseArtifact(c fiber.Ctx) error {
 	if err := s.store.DeleteArtifact(c.Context(), pathID(c, "id"), c.Params("release"), c.Params("filename")); err != nil {
 		return err
 	}
 	return c.SendStatus(fiber.StatusNoContent)
 }
+

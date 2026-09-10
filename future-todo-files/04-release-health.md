@@ -53,7 +53,8 @@ flows; here releases cannot be compared at all.
 
 ## Acceptance
 
-- [ ] A release list and a crash-free rate per release
-- [ ] A repeat from an older release does not reopen a resolved issue; one from a newer release does (test)
-- [ ] First/last/resolved-in release on the issue detail
-- [ ] Current `Stats.Releases` behaviour is preserved
+- [x] A release list and a crash-free rate per release
+- [x] A repeat from an older release does not reopen a resolved issue; one from a newer release does (test)
+- [x] First/last/resolved-in release on the issue detail
+- [x] Current `Stats.Releases` behaviour is preserved
+

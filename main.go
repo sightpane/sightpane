@@ -33,6 +33,7 @@ import (
 
 	"github.com/gofiber/fiber/v3"
 
+	"sightpane/internal/alert"
 	"sightpane/internal/blob"
 	"sightpane/internal/config"
 	"sightpane/internal/netx"
@@ -76,6 +77,10 @@ func main() {
 		log.Fatalf("seed: %v", err)
 	}
 
+	notifier := alert.NewNotifier(st, cfg)
+	notifier.Start()
+	defer notifier.Stop()
+
 	ln, err := net.Listen("tcp", cfg.Addr)
 	if err != nil {
 		log.Fatalf("listen: %v", err)
@@ -85,7 +90,7 @@ func main() {
 	}
 
 	embedded, _ := fs.Sub(uiFS, "ui")
-	app := server.New(st, cfg.UIDir, embedded)
+	app := server.New(st, notifier, cfg.UIDir, embedded)
 
 	log.Printf("sightpane listening on %s (db %s, data %s, frames %s, project %q key %q, admin %s, proxy_protocol=%v)",
 		cfg.Addr, st.Driver(), cfg.DataDir, st.Frames(), cfg.DefaultProject, cfg.DefaultKey, cfg.AdminEmail, cfg.ProxyProtocol)

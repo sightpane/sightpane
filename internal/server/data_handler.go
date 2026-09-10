@@ -9,6 +9,7 @@ import (
 	"errors"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/gofiber/fiber/v3"
 
@@ -23,6 +24,8 @@ func (s *Server) listSessions(c fiber.Ctx) error {
 		UserID:     c.Query("user"),
 		OnlyErrors: c.Query("errors") == "1",
 		Limit:      queryInt(c, "limit"),
+		Query:      c.Query("q"),
+		Cursor:     c.Query("cursor"),
 	})
 	if err != nil {
 		return err
@@ -80,7 +83,12 @@ func (s *Server) getFrame(c fiber.Ctx) error {
 }
 
 func (s *Server) listIssues(c fiber.Ctx) error {
-	out, err := s.store.ListIssues(pathID(c, "id"), c.Query("resolved") == "1")
+	out, err := s.store.ListIssuesWithFilter(store.IssueFilter{
+		ProjectID:       pathID(c, "id"),
+		IncludeResolved: c.Query("resolved") == "1",
+		Query:           c.Query("q"),
+		Limit:           queryInt(c, "limit"),
+	})
 	if err != nil {
 		return err
 	}
@@ -109,18 +117,27 @@ func (s *Server) getIssue(c fiber.Ctx) error {
 }
 
 // resolveIssue closes a group, or reopens it with ?undo=1. A resolved group
-// that is seen again reopens by itself during ingest.
+// that is seen again reopens by itself during ingest if seen in a newer release.
 func (s *Server) resolveIssue(c fiber.Ctx) error {
 	id, err := s.issueAllowed(c)
 	if err != nil {
 		return err
 	}
 	resolved := c.Query("undo") != "1"
-	if err := s.store.SetIssueResolved(id, resolved); err != nil {
+	var req struct {
+		Release string `json:"release"`
+	}
+	_ = c.Bind().Body(&req)
+	rel := req.Release
+	if rel == "" {
+		rel = c.Query("release")
+	}
+	if err := s.store.SetIssueResolvedWithRelease(id, resolved, rel); err != nil {
 		return err
 	}
 	return c.JSON(fiber.Map{"resolved": resolved})
 }
+
 
 func (s *Server) eventSummary(c fiber.Ctx) error {
 	out, err := s.store.EventSummary(pathID(c, "id"), queryInt(c, "days"))
@@ -129,3 +146,154 @@ func (s *Server) eventSummary(c fiber.Ctx) error {
 	}
 	return c.JSON(out)
 }
+
+type assignReq struct {
+	UserID *int64 `json:"user_id"`
+}
+
+func (s *Server) assignIssue(c fiber.Ctx) error {
+	id, err := s.issueAllowed(c)
+	if err != nil {
+		return err
+	}
+	var req assignReq
+	if err := c.Bind().Body(&req); err != nil {
+		return apierr.New(fiber.StatusBadRequest, "invalid_json", "invalid json body")
+	}
+	if err := s.store.AssignIssue(id, req.UserID); err != nil {
+		return err
+	}
+	return c.JSON(fiber.Map{"status": "ok"})
+}
+
+type statusReq struct {
+	Status string `json:"status"`
+}
+
+func (s *Server) setIssueStatus(c fiber.Ctx) error {
+	id, err := s.issueAllowed(c)
+	if err != nil {
+		return err
+	}
+	var req statusReq
+	if err := c.Bind().Body(&req); err != nil {
+		return apierr.New(fiber.StatusBadRequest, "invalid_json", "invalid json body")
+	}
+	if err := s.store.SetIssueStatus(id, req.Status); err != nil {
+		return apierr.New(fiber.StatusBadRequest, "invalid_status", err.Error())
+	}
+	return c.JSON(fiber.Map{"status": req.Status})
+}
+
+type snoozeReq struct {
+	Until          *time.Time `json:"until"`
+	CountThreshold int        `json:"count_threshold"`
+}
+
+func (s *Server) snoozeIssue(c fiber.Ctx) error {
+	id, err := s.issueAllowed(c)
+	if err != nil {
+		return err
+	}
+	var req snoozeReq
+	if err := c.Bind().Body(&req); err != nil {
+		return apierr.New(fiber.StatusBadRequest, "invalid_json", "invalid json body")
+	}
+	if err := s.store.SnoozeIssue(id, req.Until, req.CountThreshold); err != nil {
+		return err
+	}
+	return c.JSON(fiber.Map{"status": "snoozed"})
+}
+
+type mergeReq struct {
+	TargetID int64 `json:"target_id"`
+}
+
+func (s *Server) mergeIssue(c fiber.Ctx) error {
+	id, err := s.issueAllowed(c)
+	if err != nil {
+		return err
+	}
+	var req mergeReq
+	if err := c.Bind().Body(&req); err != nil {
+		return apierr.New(fiber.StatusBadRequest, "invalid_json", "invalid json body")
+	}
+	if req.TargetID <= 0 {
+		return apierr.New(fiber.StatusBadRequest, "invalid_target", "invalid target_id")
+	}
+	if err := s.store.MergeIssue(id, req.TargetID); err != nil {
+		return apierr.New(fiber.StatusBadRequest, "merge_failed", err.Error())
+	}
+	return c.JSON(fiber.Map{"status": "merged"})
+}
+
+func (s *Server) listIssueComments(c fiber.Ctx) error {
+	id, err := s.issueAllowed(c)
+	if err != nil {
+		return err
+	}
+	comments, err := s.store.ListIssueComments(id)
+	if err != nil {
+		return err
+	}
+	return c.JSON(comments)
+}
+
+type commentReq struct {
+	Body string `json:"body"`
+}
+
+func (s *Server) addIssueComment(c fiber.Ctx) error {
+	id, err := s.issueAllowed(c)
+	if err != nil {
+		return err
+	}
+	u := currentUser(c)
+	if u == nil {
+		return apierr.New(fiber.StatusUnauthorized, apierr.CodeLoginRequired, "login required")
+	}
+	var req commentReq
+	if err := c.Bind().Body(&req); err != nil {
+		return apierr.New(fiber.StatusBadRequest, "invalid_json", "invalid json body")
+	}
+	if strings.TrimSpace(req.Body) == "" {
+		return apierr.New(fiber.StatusBadRequest, "body_required", "comment body required")
+	}
+	comment, err := s.store.AddIssueComment(id, u.ID, req.Body)
+	if err != nil {
+		return err
+	}
+	return c.Status(fiber.StatusCreated).JSON(comment)
+}
+
+func (s *Server) listFingerprintRules(c fiber.Ctx) error {
+	rules, err := s.store.ListFingerprintRules(pathID(c, "id"))
+	if err != nil {
+		return err
+	}
+	return c.JSON(rules)
+}
+
+func (s *Server) createFingerprintRule(c fiber.Ctx) error {
+	pid := pathID(c, "id")
+	var r store.ProjectFingerprintRule
+	if err := c.Bind().Body(&r); err != nil {
+		return apierr.New(fiber.StatusBadRequest, "invalid_json", "invalid json body")
+	}
+	r.ProjectID = pid
+	created, err := s.store.CreateFingerprintRule(r)
+	if err != nil {
+		return apierr.New(fiber.StatusBadRequest, "invalid_rule", err.Error())
+	}
+	return c.Status(fiber.StatusCreated).JSON(created)
+}
+
+func (s *Server) deleteFingerprintRule(c fiber.Ctx) error {
+	pid := pathID(c, "id")
+	ruleID := pathID(c, "ruleId")
+	if err := s.store.DeleteFingerprintRule(pid, ruleID); err != nil {
+		return err
+	}
+	return c.SendStatus(fiber.StatusNoContent)
+}
+

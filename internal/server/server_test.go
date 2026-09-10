@@ -2,8 +2,12 @@ package server
 
 import (
 	"bytes"
+	"crypto/hmac"
+	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"io"
 	"mime/multipart"
 	"net/http"
@@ -12,12 +16,15 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/gofiber/fiber/v3"
 
+	"sightpane/internal/alert"
 	"sightpane/internal/apierr"
+	"sightpane/internal/config"
 	"sightpane/internal/store"
 	"sightpane/internal/testdb"
 )
@@ -40,7 +47,7 @@ func newTestServer(t *testing.T) (*fiber.App, *store.Store) {
 		t.Fatal(err)
 	}
 	userTok, _ = st.IssueToken(u.ID)
-	return New(st, "", nil), st
+	return New(st, nil, "", nil), st
 }
 
 // testStore opens the database one test runs against: a schema of its own inside
@@ -107,6 +114,10 @@ func do(t *testing.T, app *fiber.App, method, path, key string, body any) resp {
 
 func post(t *testing.T, app *fiber.App, path, key string, body any) resp {
 	return do(t, app, "POST", path, key, body)
+}
+
+func patch(t *testing.T, app *fiber.App, path string, body any) resp {
+	return do(t, app, "PATCH", path, "", body)
 }
 
 func get(t *testing.T, app *fiber.App, path string, out any) resp {
@@ -521,6 +532,10 @@ func TestErrorCodes(t *testing.T) {
 		{"a frame that does not exist", saved, "GET", "/api/v1/sessions/e1/frames/9.png", "", nil, 404, apierr.CodeFrameNotFound},
 		{"an issue that does not exist", saved, "GET", "/api/v1/issues/999", "", nil, 404, apierr.CodeIssueNotFound},
 		{"an unsupported language", saved, "PATCH", "/api/v1/auth/me", "", map[string]any{"locale": "de"}, 400, apierr.CodeUnsupportedLocale},
+		{"an alert channel that does not exist", saved, "DELETE", "/api/v1/projects/1/alert-channels/999", "", nil, 404, apierr.CodeAlertChannelNotFound},
+		{"an invalid channel kind", saved, "POST", "/api/v1/projects/1/alert-channels", "", map[string]any{"name": "x", "kind": "carrier_pigeon", "target": "pigeon"}, 400, apierr.CodeAlertChannelInvalid},
+		{"an alert rule that does not exist", saved, "DELETE", "/api/v1/projects/1/alerts/999", "", nil, 404, apierr.CodeAlertRuleNotFound},
+		{"an invalid rule kind", saved, "POST", "/api/v1/projects/1/alerts", "", map[string]any{"name": "x", "kind": "telepathy"}, 400, apierr.CodeAlertRuleInvalid},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			userTok = c.token
@@ -601,7 +616,7 @@ func TestDashboardIsServedAsASinglePageApp(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { st.Close() })
-	app := New(st, dir, nil)
+	app := New(st, nil, dir, nil)
 
 	for _, c := range []struct {
 		name, path, wantBody string
@@ -846,3 +861,754 @@ func TestSourceMapUploadIsOwnerOnly(t *testing.T) {
 		t.Fatalf("a non-map upload must be rejected: %d %s", rr.Code, rr.Body.String())
 	}
 }
+
+func TestAlertsCRUD(t *testing.T) {
+	h, _ := newTestServer(t)
+
+	// Create channels
+	chBody := map[string]any{
+		"name":   "Team Slack",
+		"kind":   "slack",
+		"target": "https://hooks.slack.com/services/test/webhook",
+	}
+	rr := post(t, h, "/api/v1/projects/1/alert-channels", "", chBody)
+	if rr.Code != 201 {
+		t.Fatalf("create channel: %d %s", rr.Code, rr.Body.String())
+	}
+	var ch store.AlertChannel
+	_ = json.Unmarshal(rr.Body.Bytes(), &ch)
+	if ch.ID == 0 || ch.Name != "Team Slack" || ch.Kind != "slack" {
+		t.Fatalf("unexpected channel: %+v", ch)
+	}
+
+	// List channels
+	var channels []store.AlertChannel
+	get(t, h, "/api/v1/projects/1/alert-channels", &channels)
+	if len(channels) != 1 || channels[0].ID != ch.ID {
+		t.Fatalf("list channels: %+v", channels)
+	}
+
+	// Update channel
+	updateBody := map[string]any{
+		"name":   "Updated Slack",
+		"kind":   "slack",
+		"target": "https://hooks.slack.com/services/updated",
+	}
+	rr = patch(t, h, "/api/v1/projects/1/alert-channels/"+strconv.FormatInt(ch.ID, 10), updateBody)
+	if rr.Code != 200 {
+		t.Fatalf("update channel: %d %s", rr.Code, rr.Body.String())
+	}
+	get(t, h, "/api/v1/projects/1/alert-channels", &channels)
+	if channels[0].Name != "Updated Slack" {
+		t.Fatalf("updated channel name: %s", channels[0].Name)
+	}
+
+	// Create rule
+	ruleBody := map[string]any{
+		"name":        "New Error Rule",
+		"kind":        "new_issue",
+		"params":      map[string]any{},
+		"channel_ids": []int64{ch.ID},
+		"enabled":     true,
+	}
+	rr = post(t, h, "/api/v1/projects/1/alerts", "", ruleBody)
+	if rr.Code != 201 {
+		t.Fatalf("create rule: %d %s", rr.Code, rr.Body.String())
+	}
+	var rule store.AlertRule
+	_ = json.Unmarshal(rr.Body.Bytes(), &rule)
+	if rule.ID == 0 || rule.Name != "New Error Rule" || len(rule.ChannelIDs) != 1 {
+		t.Fatalf("unexpected rule: %+v", rule)
+	}
+
+	// List rules
+	var rules []store.AlertRule
+	get(t, h, "/api/v1/projects/1/alerts", &rules)
+	if len(rules) != 1 || rules[0].ID != rule.ID {
+		t.Fatalf("list rules: %+v", rules)
+	}
+
+	// Update rule
+	disabled := false
+	rr = patch(t, h, "/api/v1/projects/1/alerts/"+strconv.FormatInt(rule.ID, 10), map[string]any{
+		"enabled": &disabled,
+	})
+	if rr.Code != 200 {
+		t.Fatalf("update rule: %d", rr.Code)
+	}
+	get(t, h, "/api/v1/projects/1/alerts", &rules)
+	if rules[0].Enabled {
+		t.Fatalf("rule should be disabled")
+	}
+
+	// Delete rule
+	rr = do(t, h, "DELETE", "/api/v1/projects/1/alerts/"+strconv.FormatInt(rule.ID, 10), "", nil)
+	if rr.Code != 200 {
+		t.Fatalf("delete rule: %d", rr.Code)
+	}
+	get(t, h, "/api/v1/projects/1/alerts", &rules)
+	if len(rules) != 0 {
+		t.Fatalf("rule should be deleted")
+	}
+
+	// Delete channel
+	rr = do(t, h, "DELETE", "/api/v1/projects/1/alert-channels/"+strconv.FormatInt(ch.ID, 10), "", nil)
+	if rr.Code != 200 {
+		t.Fatalf("delete channel: %d", rr.Code)
+	}
+	get(t, h, "/api/v1/projects/1/alert-channels", &channels)
+	if len(channels) != 0 {
+		t.Fatalf("channel should be deleted")
+	}
+}
+
+func TestAlertNotificationsAndDeduplication(t *testing.T) {
+	var receivedPayloads []alert.NotificationPayload
+	var receivedSignatures []string
+	var mu sync.Mutex
+
+	secret := "topsecretkey123"
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		sig := r.Header.Get("X-Sightpane-Signature")
+
+		// Verify signature if present
+		timestamp := r.Header.Get("X-Sightpane-Timestamp")
+		mac := hmac.New(sha256.New, []byte(secret))
+		mac.Write([]byte(timestamp))
+		mac.Write([]byte("."))
+		mac.Write(body)
+		expectedSig := fmt.Sprintf("t=%s,v1=%s", timestamp, hex.EncodeToString(mac.Sum(nil)))
+		if sig != expectedSig {
+			t.Errorf("signature mismatch: got %q want %q", sig, expectedSig)
+		}
+
+		var p alert.NotificationPayload
+		_ = json.Unmarshal(body, &p)
+		mu.Lock()
+		receivedPayloads = append(receivedPayloads, p)
+		receivedSignatures = append(receivedSignatures, sig)
+		mu.Unlock()
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	st := testStore(t)
+	u, err := st.CreateUser("owner@x.io", "Owner", "secret1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.CreateProject("test", "flutter", "key1", &u.ID); err != nil {
+		t.Fatal(err)
+	}
+	userTok, _ = st.IssueToken(u.ID)
+
+	notifier := alert.NewNotifier(st, config.Config{
+		PublicURL: "http://localhost:8790",
+	})
+	notifier.Start()
+	defer notifier.Stop()
+
+	h := New(st, notifier, "", nil)
+
+	// Create webhook channel pointing to test server
+	rr := post(t, h, "/api/v1/projects/1/alert-channels", "", map[string]any{
+		"name":   "Webhook Alert",
+		"kind":   "webhook",
+		"target": srv.URL,
+		"secret": secret,
+	})
+	if rr.Code != 201 {
+		t.Fatalf("create channel: %d", rr.Code)
+	}
+	var ch store.AlertChannel
+	_ = json.Unmarshal(rr.Body.Bytes(), &ch)
+
+	// Create rules for new_issue and regression
+	rr = post(t, h, "/api/v1/projects/1/alerts", "", map[string]any{
+		"name":        "New Issue Rule",
+		"kind":        "new_issue",
+		"channel_ids": []int64{ch.ID},
+		"enabled":     true,
+	})
+	if rr.Code != 201 {
+		t.Fatalf("create new_issue rule: %d", rr.Code)
+	}
+	rr = post(t, h, "/api/v1/projects/1/alerts", "", map[string]any{
+		"name":        "Regression Rule",
+		"kind":        "regression",
+		"channel_ids": []int64{ch.ID},
+		"enabled":     true,
+	})
+	if rr.Code != 201 {
+		t.Fatalf("create regression rule: %d", rr.Code)
+	}
+
+	// 1. Send test to channel
+	rr = post(t, h, "/api/v1/projects/1/alert-channels/"+strconv.FormatInt(ch.ID, 10)+"/test", "", nil)
+	if rr.Code != 200 {
+		t.Fatalf("send test: %d %s", rr.Code, rr.Body.String())
+	}
+	time.Sleep(100 * time.Millisecond)
+
+	mu.Lock()
+	if len(receivedPayloads) != 1 || receivedPayloads[0].EventKind != "test" {
+		t.Fatalf("expected 1 test payload, got %+v", receivedPayloads)
+	}
+	mu.Unlock()
+
+	// 2. Ingest a new error -> triggers new_issue
+	stack := "#0 main (package:app/main.dart:10:5)"
+	rr = post(t, h, "/api/v1/envelope", "key1", envelope("s1", map[string]any{
+		"type":      "error",
+		"message":   "Out of memory",
+		"exception": "OutOfMemoryError",
+		"stack":     stack,
+	}))
+	if rr.Code != 202 {
+		t.Fatalf("ingest: %d", rr.Code)
+	}
+
+	// Wait for worker goroutine
+	time.Sleep(200 * time.Millisecond)
+
+	mu.Lock()
+	if len(receivedPayloads) != 2 || receivedPayloads[1].EventKind != "new_issue" {
+		t.Fatalf("expected new_issue payload, got %+v", receivedPayloads)
+	}
+	if !strings.Contains(receivedPayloads[1].URL, "/projects/1/issues/") {
+		t.Fatalf("expected deep link in URL, got %s", receivedPayloads[1].URL)
+	}
+	mu.Unlock()
+
+	// 3. Ingest the same error again -> must NOT send duplicate alert
+	rr = post(t, h, "/api/v1/envelope", "key1", envelope("s2", map[string]any{
+		"type":      "error",
+		"message":   "Out of memory",
+		"exception": "OutOfMemoryError",
+		"stack":     stack,
+	}))
+	if rr.Code != 202 {
+		t.Fatalf("ingest 2: %d", rr.Code)
+	}
+	time.Sleep(200 * time.Millisecond)
+
+	mu.Lock()
+	if len(receivedPayloads) != 2 {
+		t.Fatalf("duplicate alert was sent! count: %d", len(receivedPayloads))
+	}
+	mu.Unlock()
+
+	// 4. Resolve the issue
+	post(t, h, "/api/v1/issues/1/resolve", "", nil)
+
+	// 5. Ingest the error again -> now it is a regression!
+	rr = post(t, h, "/api/v1/envelope", "key1", envelope("s3", map[string]any{
+		"type":      "error",
+		"message":   "Out of memory",
+		"exception": "OutOfMemoryError",
+		"stack":     stack,
+	}))
+	if rr.Code != 202 {
+		t.Fatalf("ingest 3: %d", rr.Code)
+	}
+	time.Sleep(200 * time.Millisecond)
+
+	mu.Lock()
+	if len(receivedPayloads) != 3 || receivedPayloads[2].EventKind != "regression" {
+		t.Fatalf("expected regression payload, got %+v", receivedPayloads)
+	}
+	mu.Unlock()
+}
+
+func TestAlertRateSpikeAndCooldown(t *testing.T) {
+	var count int
+	var mu sync.Mutex
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		count++
+		mu.Unlock()
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	st := testStore(t)
+	u, err := st.CreateUser("owner@x.io", "Owner", "secret1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.CreateProject("test", "flutter", "key1", &u.ID); err != nil {
+		t.Fatal(err)
+	}
+	userTok, _ = st.IssueToken(u.ID)
+
+	notifier := alert.NewNotifier(st, config.Config{
+		PublicURL: "http://localhost:8790",
+	})
+	h := New(st, notifier, "", nil)
+
+	// Create webhook channel
+	rr := post(t, h, "/api/v1/projects/1/alert-channels", "", map[string]any{
+		"name":   "Rate Spike Webhook",
+		"kind":   "webhook",
+		"target": srv.URL,
+	})
+	if rr.Code != 201 {
+		t.Fatalf("create channel: %d", rr.Code)
+	}
+	var ch store.AlertChannel
+	_ = json.Unmarshal(rr.Body.Bytes(), &ch)
+
+	// Create rate_spike rule: threshold 2 errors, cooldown 30 min
+	rr = post(t, h, "/api/v1/projects/1/alerts", "", map[string]any{
+		"name": "Rate Spike Rule",
+		"kind": "rate_spike",
+		"params": map[string]any{
+			"threshold":        2,
+			"window_minutes":   15,
+			"cooldown_minutes": 30,
+		},
+		"channel_ids": []int64{ch.ID},
+		"enabled":     true,
+	})
+	if rr.Code != 201 {
+		t.Fatalf("create rate_spike rule: %d", rr.Code)
+	}
+
+	// Ingest 2 errors
+	post(t, h, "/api/v1/envelope", "key1", envelope("s1", map[string]any{
+		"type":    "error",
+		"message": "err 1",
+	}))
+	post(t, h, "/api/v1/envelope", "key1", envelope("s2", map[string]any{
+		"type":    "error",
+		"message": "err 2",
+	}))
+
+	// Trigger rate rule evaluation
+	notifier.EvaluateRateRules()
+
+	mu.Lock()
+	if count != 1 {
+		t.Fatalf("expected 1 rate spike alert, got %d", count)
+	}
+	mu.Unlock()
+
+	// Trigger rate rule evaluation again -> cooldown should suppress it!
+	notifier.EvaluateRateRules()
+
+	mu.Lock()
+	if count != 1 {
+		t.Fatalf("cooldown failed! expected 1, got %d", count)
+	}
+	mu.Unlock()
+}
+
+func TestSearchEndpoints(t *testing.T) {
+	app, _ := newTestServer(t)
+
+	// Ingest sessions
+	post(t, app, "/api/v1/envelope", "key1", map[string]any{
+		"sdk": map[string]any{"name": "sightpane", "version": "0.1.0"},
+		"session": map[string]any{
+			"id":         "sess-alpha",
+			"started_at": time.Now().UTC().Format(time.RFC3339Nano),
+			"device":     map[string]any{"platform": "web", "release": "1.2.3", "browser": "Firefox"},
+			"props":      map[string]any{"tier": "gold"},
+		},
+		"items": []map[string]any{
+			{"type": "route", "name": "/checkout"},
+		},
+	})
+
+	post(t, app, "/api/v1/envelope", "key1", map[string]any{
+		"sdk": map[string]any{"name": "sightpane", "version": "0.1.0"},
+		"session": map[string]any{
+			"id":         "sess-beta",
+			"started_at": time.Now().UTC().Format(time.RFC3339Nano),
+			"device":     map[string]any{"platform": "ios", "release": "2.0.0", "browser": "Safari"},
+			"props":      map[string]any{"tier": "silver"},
+		},
+		"items": []map[string]any{
+			{"type": "error", "message": "payment failed", "exception": "PaymentError"},
+		},
+	})
+
+	// Valid search filter
+	var sessions []store.Session
+	rr := get(t, app, "/api/v1/projects/1/sessions?q=release:1.2.3", &sessions)
+	if rr.Code != 200 {
+		t.Fatalf("sessions search expected 200, got %d: %s", rr.Code, rr.Body.String())
+	}
+	if len(sessions) != 1 || sessions[0].ID != "sess-alpha" {
+		t.Fatalf("expected sess-alpha, got %d sessions: %+v", len(sessions), sessions)
+	}
+
+	// Filter by errors:true
+	rr = get(t, app, "/api/v1/projects/1/sessions?q=errors:true", &sessions)
+	if rr.Code != 200 {
+		t.Fatalf("sessions search errors:true expected 200, got %d", rr.Code)
+	}
+	if len(sessions) != 1 || sessions[0].ID != "sess-beta" {
+		t.Fatalf("expected sess-beta for errors:true, got %d", len(sessions))
+	}
+
+	// Invalid filter key returns 400
+	rr = get(t, app, "/api/v1/projects/1/sessions?q=invalidfield:abc", nil)
+	if rr.Code != 400 {
+		t.Fatalf("expected 400 for invalid search key, got %d: %s", rr.Code, rr.Body.String())
+	}
+	if !strings.Contains(rr.Body.String(), apierr.CodeSearchInvalid) {
+		t.Fatalf("expected code %s, got: %s", apierr.CodeSearchInvalid, rr.Body.String())
+	}
+
+	// Issues search
+	var issues []store.Issue
+	rr = get(t, app, "/api/v1/projects/1/issues?q=exception:PaymentError", &issues)
+	if rr.Code != 200 {
+		t.Fatalf("issues search expected 200, got %d: %s", rr.Code, rr.Body.String())
+	}
+	if len(issues) != 1 {
+		t.Fatalf("expected 1 issue, got %d", len(issues))
+	}
+}
+
+func TestIssueWorkflowEndpoints(t *testing.T) {
+	app, st := newTestServer(t)
+
+	// Create a second user
+	dev, err := st.CreateUser("dev@x.io", "Dev", "secret2")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Ingest an error
+	post(t, app, "/api/v1/envelope", "key1", map[string]any{
+		"sdk": map[string]any{"name": "sightpane", "version": "0.1.0"},
+		"session": map[string]any{
+			"id":         "sess-wf",
+			"started_at": time.Now().UTC().Format(time.RFC3339Nano),
+		},
+		"items": []map[string]any{
+			{"type": "error", "message": "unhandled null exception", "exception": "NullPointerException"},
+		},
+	})
+
+	var issues []store.Issue
+	rr := get(t, app, "/api/v1/projects/1/issues", &issues)
+	if rr.Code != 200 || len(issues) != 1 {
+		t.Fatalf("expected 1 issue, got %d", len(issues))
+	}
+	issueID := issues[0].ID
+
+	// 1. Assign to dev
+	rr = post(t, app, fmt.Sprintf("/api/v1/issues/%d/assign", issueID), "", map[string]any{
+		"user_id": dev.ID,
+	})
+	if rr.Code != 200 {
+		t.Fatalf("assign issue failed: %d %s", rr.Code, rr.Body.String())
+	}
+
+	var detail store.IssueDetail
+	rr = get(t, app, fmt.Sprintf("/api/v1/issues/%d", issueID), &detail)
+	if rr.Code != 200 || detail.AssigneeEmail != dev.Email {
+		t.Fatalf("expected assigned to %s, got %+v", dev.Email, detail)
+	}
+
+	// 2. Add comment
+	rr = post(t, app, fmt.Sprintf("/api/v1/issues/%d/comments", issueID), "", map[string]any{
+		"body": "Fixed in PR #42",
+	})
+	if rr.Code != 201 {
+		t.Fatalf("add comment failed: %d %s", rr.Code, rr.Body.String())
+	}
+
+	var comments []store.IssueComment
+	rr = get(t, app, fmt.Sprintf("/api/v1/issues/%d/comments", issueID), &comments)
+	if rr.Code != 200 || len(comments) != 1 || comments[0].Body != "Fixed in PR #42" {
+		t.Fatalf("expected 1 comment, got %+v", comments)
+	}
+
+	// 3. Snooze issue
+	rr = post(t, app, fmt.Sprintf("/api/v1/issues/%d/snooze", issueID), "", map[string]any{
+		"count_threshold": 5,
+	})
+	if rr.Code != 200 {
+		t.Fatalf("snooze issue failed: %d %s", rr.Code, rr.Body.String())
+	}
+
+	rr = get(t, app, fmt.Sprintf("/api/v1/issues/%d", issueID), &detail)
+	if rr.Code != 200 || detail.Status != "snoozed" {
+		t.Fatalf("expected snoozed status, got %s", detail.Status)
+	}
+
+	// 4. Status change to ignored
+	rr = post(t, app, fmt.Sprintf("/api/v1/issues/%d/status", issueID), "", map[string]any{
+		"status": "ignored",
+	})
+	if rr.Code != 200 {
+		t.Fatalf("ignore issue failed: %d %s", rr.Code, rr.Body.String())
+	}
+
+	rr = get(t, app, fmt.Sprintf("/api/v1/issues/%d", issueID), &detail)
+	if rr.Code != 200 || detail.Status != "ignored" {
+		t.Fatalf("expected ignored status, got %s", detail.Status)
+	}
+
+	// 5. Fingerprint rules endpoint
+	rr = post(t, app, "/api/v1/projects/1/fingerprint-rules", "", map[string]any{
+		"exception_match": "FrameworkWarning",
+		"action":          "ignore",
+		"priority":        10,
+	})
+	if rr.Code != 201 {
+		t.Fatalf("create fingerprint rule failed: %d %s", rr.Code, rr.Body.String())
+	}
+
+	var rules []store.ProjectFingerprintRule
+	rr = get(t, app, "/api/v1/projects/1/fingerprint-rules", &rules)
+	if rr.Code != 200 || len(rules) != 1 {
+		t.Fatalf("expected 1 rule, got %d", len(rules))
+	}
+
+	// Delete rule
+	rr = do(t, app, "DELETE", fmt.Sprintf("/api/v1/projects/1/fingerprint-rules/%d", rules[0].ID), "", nil)
+	if rr.Code != 204 {
+		t.Fatalf("delete rule failed: %d", rr.Code)
+	}
+}
+
+func TestReleaseHealthAndRegression(t *testing.T) {
+	app, _ := newTestServer(t)
+	stack := "#0 main (package:app/main.dart:10:5)"
+
+	// 1. Ingest session with release 1.0.0 and an error
+	env1 := map[string]any{
+		"sdk": map[string]any{"name": "sightpane", "version": "0.1.0"},
+		"session": map[string]any{
+			"id":         "sess-1",
+			"started_at": time.Now().UTC().Format(time.RFC3339Nano),
+			"user":       map[string]any{"id": "u1"},
+			"device":     map[string]any{"platform": "web", "release": "1.0.0"},
+		},
+		"items": []map[string]any{
+			{"type": "error", "message": "Failed to load", "exception": "NetworkException", "stack": stack},
+		},
+	}
+	rr := post(t, app, "/api/v1/envelope", "key1", env1)
+	if rr.Code != 202 {
+		t.Fatalf("ingest 1 failed: %d", rr.Code)
+	}
+
+	var issues []store.Issue
+	rr = get(t, app, "/api/v1/projects/1/issues", &issues)
+	if rr.Code != 200 || len(issues) != 1 {
+		t.Fatalf("expected 1 issue, got %d", len(issues))
+	}
+	issueID := issues[0].ID
+
+	var detail store.IssueDetail
+	rr = get(t, app, fmt.Sprintf("/api/v1/issues/%d", issueID), &detail)
+	if rr.Code != 200 {
+		t.Fatalf("get issue failed: %d", rr.Code)
+	}
+	if detail.FirstRelease != "1.0.0" || detail.LastRelease != "1.0.0" {
+		t.Fatalf("expected release 1.0.0, got first=%s last=%s", detail.FirstRelease, detail.LastRelease)
+	}
+
+	// 2. Resolve issue in release 1.0.0
+	rr = post(t, app, fmt.Sprintf("/api/v1/issues/%d/resolve", issueID), "", map[string]any{
+		"release": "1.0.0",
+	})
+	if rr.Code != 200 {
+		t.Fatalf("resolve failed: %d", rr.Code)
+	}
+
+	// Verify resolved status and resolved_in_release
+	rr = get(t, app, fmt.Sprintf("/api/v1/issues/%d", issueID), &detail)
+	if rr.Code != 200 || detail.Status != "resolved" || detail.ResolvedInRelease != "1.0.0" {
+		t.Fatalf("expected resolved in 1.0.0, got status=%s resolved_in=%s", detail.Status, detail.ResolvedInRelease)
+	}
+
+	// 3. Ingest same error from older release 0.9.0 -> MUST NOT REOPEN
+	envOlder := map[string]any{
+		"sdk": map[string]any{"name": "sightpane", "version": "0.1.0"},
+		"session": map[string]any{
+			"id":         "sess-older",
+			"started_at": time.Now().UTC().Format(time.RFC3339Nano),
+			"user":       map[string]any{"id": "u2"},
+			"device":     map[string]any{"platform": "web", "release": "0.9.0"},
+		},
+		"items": []map[string]any{
+			{"type": "error", "message": "Failed to load", "exception": "NetworkException", "stack": stack},
+		},
+	}
+	rr = post(t, app, "/api/v1/envelope", "key1", envOlder)
+	if rr.Code != 202 {
+		t.Fatalf("ingest older failed: %d", rr.Code)
+	}
+
+	// Check issue is STILL resolved
+	rr = get(t, app, fmt.Sprintf("/api/v1/issues/%d", issueID), &detail)
+	if rr.Code != 200 || detail.Status != "resolved" {
+		t.Fatalf("issue from older release should stay resolved, but got status: %s", detail.Status)
+	}
+
+	// 4. Ingest same error from newer release 1.1.0 -> MUST REOPEN (REGRESSION)
+	envNewer := map[string]any{
+		"sdk": map[string]any{"name": "sightpane", "version": "0.1.0"},
+		"session": map[string]any{
+			"id":         "sess-newer",
+			"started_at": time.Now().UTC().Format(time.RFC3339Nano),
+			"user":       map[string]any{"id": "u3"},
+			"device":     map[string]any{"platform": "web", "release": "1.1.0"},
+		},
+		"items": []map[string]any{
+			{"type": "error", "message": "Failed to load", "exception": "NetworkException", "stack": stack},
+		},
+	}
+	rr = post(t, app, "/api/v1/envelope", "key1", envNewer)
+	if rr.Code != 202 {
+		t.Fatalf("ingest newer failed: %d", rr.Code)
+	}
+
+	// Check issue is now REOPENED
+	rr = get(t, app, fmt.Sprintf("/api/v1/issues/%d", issueID), &detail)
+	if rr.Code != 200 || detail.Status != "open" || detail.Resolved {
+		t.Fatalf("issue from newer release should be reopened, got status=%s resolved=%v", detail.Status, detail.Resolved)
+	}
+	if detail.LastRelease != "1.1.0" {
+		t.Fatalf("expected last_release 1.1.0, got %s", detail.LastRelease)
+	}
+
+	// 5. Ingest an error-free session on 1.1.0
+	envClean := map[string]any{
+		"sdk": map[string]any{"name": "sightpane", "version": "0.1.0"},
+		"session": map[string]any{
+			"id":         "sess-clean",
+			"started_at": time.Now().UTC().Format(time.RFC3339Nano),
+			"user":       map[string]any{"id": "u4"},
+			"device":     map[string]any{"platform": "web", "release": "1.1.0"},
+		},
+		"items": []map[string]any{
+			{"type": "event", "name": "heartbeat"},
+		},
+	}
+	rr = post(t, app, "/api/v1/envelope", "key1", envClean)
+	if rr.Code != 202 {
+		t.Fatalf("ingest clean failed: %d", rr.Code)
+	}
+
+	// 6. Test GET /api/v1/projects/1/releases
+	var releases []store.ReleaseHealth
+	rr = get(t, app, "/api/v1/projects/1/releases", &releases)
+	if rr.Code != 200 || len(releases) < 3 {
+		t.Fatalf("expected at least 3 releases, got %d", len(releases))
+	}
+
+	// Verify 1.1.0 has 2 sessions, 1 with error -> 50% crash-free
+	var rel110 *store.ReleaseHealth
+	for _, r := range releases {
+		if r.Version == "1.1.0" {
+			rel110 = &r
+			break
+		}
+	}
+	if rel110 == nil {
+		t.Fatal("release 1.1.0 not found in list")
+	}
+	if rel110.SessionCount != 2 || rel110.ErrorSessionCount != 1 || rel110.CrashFreeRate != 50.0 {
+		t.Fatalf("expected 1.1.0 50%% crash-free (2 sessions, 1 error), got: %+v", rel110)
+	}
+
+	// 7. Test GET /api/v1/projects/1/releases/:release
+	var singleRel store.ReleaseHealth
+	rr = get(t, app, "/api/v1/projects/1/releases/1.1.0", &singleRel)
+	if rr.Code != 200 || singleRel.Version != "1.1.0" || singleRel.CrashFreeRate != 50.0 {
+		t.Fatalf("expected release detail 1.1.0, got: %+v", singleRel)
+	}
+}
+
+func TestPerformanceEndpoints(t *testing.T) {
+	app, _ := newTestServer(t)
+
+	// 1. Ingest spans and transactions
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	body := fmt.Sprintf(`{
+		"sdk": {"name": "sightpane", "version": "0.1.0"},
+		"session": {"id": "sess_perf_srv", "started_at": %q},
+		"items": [
+			{
+				"type": "span",
+				"ts": %q,
+				"op": "http.client",
+				"name": "GET /api/v1/items",
+				"duration_ms": 120.5,
+				"status": "200"
+			},
+			{
+				"type": "span",
+				"ts": %q,
+				"op": "http.client",
+				"name": "GET /api/v1/items",
+				"duration_ms": 340.0,
+				"status": "500"
+			},
+			{
+				"type": "transaction",
+				"ts": %q,
+				"op": "navigation",
+				"name": "route:/dashboard",
+				"duration_ms": 450.0,
+				"status": "ok",
+				"span_id": "root_tx",
+				"spans": [
+					{
+						"op": "ui.build",
+						"name": "build_cards",
+						"duration_ms": 60.0,
+						"status": "ok",
+						"parent_span_id": "root_tx"
+					}
+				]
+			}
+		]
+	}`, now, now, now, now)
+
+	rr := post(t, app, "/api/v1/envelope", "key1", json.RawMessage(body))
+	if rr.Code != 202 {
+		t.Fatalf("ingest performance: %d %s", rr.Code, rr.Body.String())
+	}
+
+	// 2. GET /api/v1/projects/1/performance
+	var perfResp store.PerformanceResponse
+	rr = get(t, app, "/api/v1/projects/1/performance?days=7", &perfResp)
+	if rr.Code != 200 {
+		t.Fatalf("get performance: %d %s", rr.Code, rr.Body.String())
+	}
+	if len(perfResp.Summary) == 0 {
+		t.Fatalf("expected summary items, got none")
+	}
+
+	// 3. GET /api/v1/projects/1/performance/detail?name=GET /api/v1/items&op=http.client
+	var detailResp store.TransactionDetailResponse
+	rr = get(t, app, "/api/v1/projects/1/performance/detail?name=GET%20/api/v1/items&op=http.client", &detailResp)
+	if rr.Code != 200 {
+		t.Fatalf("get transaction detail: %d %s", rr.Code, rr.Body.String())
+	}
+	if detailResp.Count != 2 {
+		t.Fatalf("expected 2 items, got %d", detailResp.Count)
+	}
+	if len(detailResp.Samples) != 2 {
+		t.Fatalf("expected 2 samples, got %d", len(detailResp.Samples))
+	}
+	if detailResp.Samples[0].DurationMs < detailResp.Samples[1].DurationMs {
+		t.Fatalf("expected samples ordered descending by duration")
+	}
+}
+
+
+
+

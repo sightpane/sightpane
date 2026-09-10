@@ -59,8 +59,8 @@ the actual need is reaching someone who is not looking at the dashboard.
 
 ## Acceptance
 
-- [ ] Slack/email notifications for a new issue and for a regression (fake SMTP/HTTP server in tests)
-- [ ] No duplicate send for the same event (via `alert_deliveries`), and the cooldown works
-- [ ] Ingest time does not change measurably (notification happens in a goroutine)
-- [ ] Rule/channel CRUD and "send test" on the settings page (widget test with FakeApi)
-- [ ] Env table in the README and a compose example
+- [x] Slack/email notifications for a new issue and for a regression (fake SMTP/HTTP server in tests)
+- [x] No duplicate send for the same event (via `alert_deliveries`), and the cooldown works
+- [x] Ingest time does not change measurably (notification happens in a goroutine)
+- [x] Rule/channel CRUD and "send test" on the settings page (widget test with FakeApi)
+- [x] Env table in the README and a compose example

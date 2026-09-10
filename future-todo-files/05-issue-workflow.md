@@ -56,8 +56,9 @@ managed without knowing "who is on it" and "why we ignored it".
 
 ## Acceptance
 
-- [ ] Status transitions and threshold-based snooze covered in a backend test
-- [ ] An ignored issue is counted at ingest but does not show up in the list or in notifications
-- [ ] A fingerprint rule sends the framework warning into a separate group or to ignored (test)
-- [ ] The assignment/comment/status flow in the dashboard has a widget test with `FakeApi`
-- [ ] `Issue.fromJson` stays compatible with the old `resolved` field
+- [x] Status transitions and threshold-based snooze covered in a backend test
+- [x] An ignored issue is counted at ingest but does not show up in the list or in notifications
+- [x] A fingerprint rule sends the framework warning into a separate group or to ignored (test)
+- [x] The assignment/comment/status flow in the dashboard has a widget test with `FakeApi`
+- [x] `Issue.fromJson` stays compatible with the old `resolved` field
+

@@ -52,6 +52,11 @@ type Config struct {
 	Frames string
 	S3     S3Config
 
+	// PublicURL is the external URL of the dashboard (for notification links).
+	PublicURL string
+	// SMTP is the mail server configuration for alert emails.
+	SMTP SMTPConfig
+
 	// ProxyProtocol makes the listener read a PROXY protocol (v1/v2) header, the
 	// only way a layer-4 proxy can pass the real client address through TCP.
 	ProxyProtocol bool
@@ -70,6 +75,15 @@ type S3Config struct {
 	SecretKey string
 	Region    string
 	UseSSL    bool
+}
+
+// SMTPConfig configures sending alert notification emails via net/smtp.
+type SMTPConfig struct {
+	Host string
+	Port int
+	User string
+	Pass string
+	From string
 }
 
 func Load() Config {
@@ -93,6 +107,14 @@ func Load() Config {
 			Region:    env("S3_REGION", ""),
 			UseSSL:    env("S3_USE_SSL", "") != "",
 		},
+		PublicURL: strings.TrimRight(env("PUBLIC_URL", "http://localhost:8790"), "/"),
+		SMTP: SMTPConfig{
+			Host: env("SMTP_HOST", ""),
+			Port: envInt("SMTP_PORT", 587),
+			User: env("SMTP_USER", ""),
+			Pass: env("SMTP_PASS", ""),
+			From: env("SMTP_FROM", "alerts@sightpane.local"),
+		},
 		ProxyProtocol:  env("PROXY_PROTOCOL", "") != "",
 		TrustedProxies: env("TRUSTED_PROXIES", ""),
 	}
@@ -109,9 +131,12 @@ const (
 
 var warnOnce sync.Once
 
-// env reads SIGHTPANE_<name>, then the deprecated HOG_<name>, then the default.
+// env reads SIGHTPANE_<name>, then <name>, then the deprecated HOG_<name>, then the default.
 func env(name, def string) string {
 	if v := os.Getenv(prefix + name); v != "" {
+		return v
+	}
+	if v := os.Getenv(name); v != "" {
 		return v
 	}
 	if v := os.Getenv(oldPrefix + name); v != "" {
