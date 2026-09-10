@@ -9,6 +9,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"strings"
 	"time"
 
 	"sightpane/internal/blob"
@@ -83,5 +84,56 @@ func (s *Store) PurgeExpired(ctx context.Context, defaultDays int) (int, error) 
 		}
 	}
 
+	// Also sweep orphaned objects left behind by previous failures or unlinked sessions
+	if swept, err := s.SweepOrphanFrames(ctx); err != nil {
+		log.Printf("retention sweep orphans: %v", err)
+	} else if swept > 0 {
+		log.Printf("retention swept %d orphaned session frames", swept)
+	}
+
 	return totalPurged, nil
 }
+
+// SweepOrphanFrames walks the blob store and removes frames whose session rows
+// no longer exist in the database (e.g. from failed DeleteProject or expired sessions).
+func (s *Store) SweepOrphanFrames(ctx context.Context) (int, error) {
+	sessionIDs := make(map[string]struct{})
+	err := s.blobs.Walk(ctx, "", func(key string, size int64) error {
+		// Ignore sourcemaps namespace
+		if strings.HasPrefix(key, "sourcemaps/") {
+			return nil
+		}
+		parts := strings.SplitN(key, "/", 2)
+		if len(parts) == 2 && parts[0] != "" {
+			sessionIDs[parts[0]] = struct{}{}
+		}
+		return nil
+	})
+	if err != nil {
+		return 0, fmt.Errorf("sweep orphans walk: %w", err)
+	}
+
+	if len(sessionIDs) == 0 {
+		return 0, nil
+	}
+
+	// Check which sessions actually exist in the database
+	swept := 0
+	for sid := range sessionIDs {
+		var exists bool
+		err := s.db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM sessions WHERE id=$1)`, sid).Scan(&exists)
+		if err != nil {
+			log.Printf("sweep orphans check session %s: %v", sid, err)
+			continue
+		}
+		if !exists {
+			if err := s.blobs.DeletePrefix(ctx, blob.SessionPrefix(sid)); err != nil {
+				log.Printf("sweep orphans delete %s: %v", sid, err)
+			} else {
+				swept++
+			}
+		}
+	}
+	return swept, nil
+}
+

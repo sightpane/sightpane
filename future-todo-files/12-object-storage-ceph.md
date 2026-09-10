@@ -123,11 +123,11 @@ than frames (nothing else is large enough to justify it).
       (`docker compose --profile ceph up -d`)
 - [x] `docker compose --profile ceph up -d` brings up a gateway that the backend
       can be pointed at with four environment variables
-- [ ] the retention job removes objects whose rows are gone, and a failed
+- [x] the retention job removes objects whose rows are gone, and a failed
       `DeleteProject` sweep is picked up on the next run
-- [ ] `migrate-frames` moves an existing `fs` deployment to `s3`, resumably, and
+- [x] `migrate-frames` moves an existing `fs` deployment to `s3`, resumably, and
       reports what it verified
-- [ ] `SIGHTPANE_S3_SECRET_KEY_FILE` is supported so the secret is not in the process
+- [x] `SIGHTPANE_S3_SECRET_KEY_FILE` is supported so the secret is not in the process
       environment
-- [ ] two backend replicas behind one gateway serve each other's frames (needs
+- [x] two backend replicas behind one gateway serve each other's frames (needs
       `00b` first)

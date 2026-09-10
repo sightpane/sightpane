@@ -81,3 +81,36 @@ func (f *FS) DeletePrefix(_ context.Context, prefix string) error {
 	}
 	return os.RemoveAll(p)
 }
+
+// Walk iterates over every file under the given prefix.
+func (f *FS) Walk(_ context.Context, prefix string, fn func(key string, size int64) error) error {
+	cleanPrefix := strings.TrimPrefix(filepath.Clean("/"+prefix), "/")
+	p := filepath.Join(f.root, cleanPrefix)
+	info, err := os.Stat(p)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if !info.IsDir() {
+		rel, err := filepath.Rel(f.root, p)
+		if err != nil {
+			return err
+		}
+		return fn(filepath.ToSlash(rel), info.Size())
+	}
+	return filepath.Walk(p, func(path string, fi os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+		if fi.IsDir() {
+			return nil
+		}
+		rel, err := filepath.Rel(f.root, path)
+		if err != nil {
+			return err
+		}
+		return fn(filepath.ToSlash(rel), fi.Size())
+	})
+}

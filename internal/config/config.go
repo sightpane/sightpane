@@ -107,7 +107,7 @@ func Load() Config {
 			Endpoint:  env("S3_ENDPOINT", ""),
 			Bucket:    env("S3_BUCKET", "sightpane-frames"),
 			AccessKey: env("S3_ACCESS_KEY", ""),
-			SecretKey: env("S3_SECRET_KEY", ""),
+			SecretKey: envSecret("S3_SECRET_KEY", "S3_SECRET_KEY_FILE", ""),
 			Region:    env("S3_REGION", ""),
 			UseSSL:    env("S3_USE_SSL", "") != "",
 		},
@@ -151,6 +151,18 @@ func env(name, def string) string {
 		return v
 	}
 	return def
+}
+
+// envSecret reads SIGHTPANE_<fileEnvName> (e.g. SIGHTPANE_S3_SECRET_KEY_FILE),
+// then reads that file's content. If absent or failing to read, it falls back
+// to env(name, def).
+func envSecret(name, fileEnvName, def string) string {
+	if filePath := env(fileEnvName, ""); filePath != "" {
+		if data, err := os.ReadFile(filePath); err == nil {
+			return strings.TrimSpace(string(data))
+		}
+	}
+	return env(name, def)
 }
 
 // envInt reads a whole number, and keeps the default when the value is not one

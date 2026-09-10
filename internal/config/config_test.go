@@ -5,7 +5,10 @@
 
 package config
 
-import "testing"
+import (
+	"os"
+	"testing"
+)
 
 // An existing deployment sets HOG_* variables. After the rename those must keep
 // working, or an upgrade would silently fall back to the defaults — a different
@@ -30,5 +33,23 @@ func TestLoadAcceptsBothPrefixes(t *testing.T) {
 	t.Setenv("HOG_DATA", "")
 	if got := Load(); got.Addr != ":8790" || got.DataDir != "./data" {
 		t.Fatalf("defaults: %+v", got)
+	}
+}
+
+func TestLoadS3SecretKeyFile(t *testing.T) {
+	secretFile := t.TempDir() + "/secret.txt"
+	if err := os.WriteFile(secretFile, []byte("super-secret-from-file\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	t.Setenv("SIGHTPANE_S3_SECRET_KEY_FILE", secretFile)
+	t.Setenv("SIGHTPANE_S3_SECRET_KEY", "direct-env-secret")
+	if got := Load(); got.S3.SecretKey != "super-secret-from-file" {
+		t.Fatalf("expected secret from file, got %q", got.S3.SecretKey)
+	}
+
+	t.Setenv("SIGHTPANE_S3_SECRET_KEY_FILE", "")
+	if got := Load(); got.S3.SecretKey != "direct-env-secret" {
+		t.Fatalf("expected direct secret, got %q", got.S3.SecretKey)
 	}
 }

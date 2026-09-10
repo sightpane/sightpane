@@ -198,3 +198,46 @@ func TestIngestRateLimitingAndQuota(t *testing.T) {
 		t.Fatalf("expected dropped >= 1 in stats, got %d", stats.Dropped)
 	}
 }
+
+func TestRetentionSweepOrphanFrames(t *testing.T) {
+	tempDir := t.TempDir()
+	st, err := store.Open(store.Options{
+		DSN:     testdb.DSN(t),
+		DataDir: tempDir,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+
+	// Create an orphaned frame object in the blob store directly
+	orphanSid := "session-orphaned-123"
+	orphanFrameKey := blob.FrameKey(orphanSid, 1)
+	orphanPath := filepath.Join(tempDir, "frames", orphanFrameKey)
+	if err := os.MkdirAll(filepath.Dir(orphanPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(orphanPath, []byte("fake-png-data"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Verify the orphaned file exists
+	if _, err := os.Stat(orphanPath); err != nil {
+		t.Fatalf("expected orphan file to exist: %v", err)
+	}
+
+	// Run SweepOrphanFrames
+	swept, err := st.SweepOrphanFrames(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if swept != 1 {
+		t.Fatalf("expected 1 swept orphan session, got %d", swept)
+	}
+
+	// Verify the file was removed
+	if _, err := os.Stat(orphanPath); !os.IsNotExist(err) {
+		t.Fatalf("expected orphan file to be deleted, got err: %v", err)
+	}
+}
+

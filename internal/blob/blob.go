@@ -45,6 +45,10 @@ type Store interface {
 	// having already removed the rows.
 	DeletePrefix(ctx context.Context, prefix string) error
 
+	// Walk iterates over every object under prefix, calling fn for each key and size.
+	// Used for sweeping orphans and frame migrations.
+	Walk(ctx context.Context, prefix string, fn func(key string, size int64) error) error
+
 	// Kind names the backend for logs and /health ("fs" or "s3").
 	Kind() string
 

@@ -114,3 +114,18 @@ func (s *S3) DeletePrefix(ctx context.Context, prefix string) error {
 	}
 	return firstErr
 }
+
+// Walk iterates over every object under the prefix.
+func (s *S3) Walk(ctx context.Context, prefix string, fn func(key string, size int64) error) error {
+	for obj := range s.client.ListObjects(ctx, s.bucket, minio.ListObjectsOptions{
+		Prefix: prefix, Recursive: true,
+	}) {
+		if obj.Err != nil {
+			return obj.Err
+		}
+		if err := fn(obj.Key, obj.Size); err != nil {
+			return err
+		}
+	}
+	return nil
+}

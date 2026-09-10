@@ -21,6 +21,7 @@ import (
 	"context"
 	"embed"
 	"errors"
+	"flag"
 	"fmt"
 	"io/fs"
 	"log"
@@ -55,6 +56,11 @@ var uiFS embed.FS
 
 func main() {
 	cfg := config.Load()
+
+	if len(os.Args) > 1 && os.Args[1] == "migrate-frames" {
+		runMigrateFrames(os.Args[2:], cfg)
+		return
+	}
 
 	frames, err := openFrameStore(cfg)
 	if err != nil {
@@ -202,3 +208,55 @@ func seed(st *store.Store, cfg config.Config) error {
 	}
 	return nil
 }
+
+func runMigrateFrames(args []string, cfg config.Config) {
+	fs := flag.NewFlagSet("migrate-frames", flag.ExitOnError)
+	fromKind := fs.String("from", "fs", "source frame store: fs or s3")
+	toKind := fs.String("to", "s3", "destination frame store: fs or s3")
+	_ = fs.Parse(args)
+
+	if *fromKind == *toKind {
+		log.Fatalf("migrate-frames: --from and --to cannot be the same (%s)", *fromKind)
+	}
+
+	makeStore := func(kind string) (blob.Store, error) {
+		switch kind {
+		case "fs":
+			return blob.NewFS(filepath.Join(cfg.DataDir, "frames"))
+		case "s3":
+			ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+			defer cancel()
+			return blob.NewS3(ctx, blob.S3Config{
+				Endpoint:  cfg.S3.Endpoint,
+				Bucket:    cfg.S3.Bucket,
+				AccessKey: cfg.S3.AccessKey,
+				SecretKey: cfg.S3.SecretKey,
+				Region:    cfg.S3.Region,
+				UseSSL:    cfg.S3.UseSSL,
+			})
+		default:
+			return nil, fmt.Errorf("unknown store kind: %s", kind)
+		}
+	}
+
+	src, err := makeStore(*fromKind)
+	if err != nil {
+		log.Fatalf("migrate-frames source store (%s): %v", *fromKind, err)
+	}
+	defer src.Close()
+
+	dst, err := makeStore(*toKind)
+	if err != nil {
+		log.Fatalf("migrate-frames dest store (%s): %v", *toKind, err)
+	}
+	defer dst.Close()
+
+	log.Printf("migrating frames from %s to %s...", *fromKind, *toKind)
+	stats, err := blob.Migrate(context.Background(), src, dst)
+	if err != nil {
+		log.Fatalf("migrate-frames failed: %v", err)
+	}
+	log.Printf("migrate-frames complete: scanned %d, migrated %d, skipped (already synced) %d, verified %d bytes",
+		stats.Scanned, stats.Migrated, stats.Skipped, stats.Bytes)
+}
+

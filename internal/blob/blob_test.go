@@ -101,6 +101,28 @@ func runStoreSuite(t *testing.T, s Store) {
 			t.Fatalf("err = %v", err)
 		}
 	})
+
+	t.Run("Walk iterates over matching objects", func(t *testing.T) {
+		pfx := "sess-walk/"
+		_ = s.Put(ctx, pfx+"000001.png", []byte("123"))
+		_ = s.Put(ctx, pfx+"000002.png", []byte("12345"))
+		var found []string
+		var totalSize int64
+		err := s.Walk(ctx, pfx, func(key string, size int64) error {
+			found = append(found, key)
+			totalSize += size
+			return nil
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(found) != 2 {
+			t.Fatalf("expected 2 keys, got %v", found)
+		}
+		if totalSize != 8 {
+			t.Fatalf("expected totalSize 8, got %d", totalSize)
+		}
+	})
 }
 
 func TestFS(t *testing.T) {
