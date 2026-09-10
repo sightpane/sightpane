@@ -45,14 +45,32 @@ func (s *Server) getProject(c fiber.Ctx) error {
 }
 
 func (s *Server) updateProject(c fiber.Ctx) error {
-	var in struct{ Name, Platform string }
+	var in struct {
+		Name                string `json:"name"`
+		Platform            string `json:"platform"`
+		RetentionDays       *int   `json:"retention_days"`
+		QuotaItemsPerMinute *int   `json:"quota_items_per_minute"`
+	}
 	if err := c.Bind().JSON(&in); err != nil || strings.TrimSpace(in.Name) == "" {
 		return apierr.New(fiber.StatusBadRequest, apierr.CodeProjectNameNeeded, "name required")
 	}
 	if in.Platform == "" {
 		in.Platform = "flutter"
 	}
-	if err := s.store.UpdateProject(pathID(c, "id"), in.Name, in.Platform); err != nil {
+	pid := pathID(c, "id")
+	p, err := s.store.ProjectByID(pid)
+	if err != nil {
+		return err
+	}
+	retentionDays := p.RetentionDays
+	if in.RetentionDays != nil && *in.RetentionDays >= 0 {
+		retentionDays = *in.RetentionDays
+	}
+	quota := p.QuotaItemsPerMinute
+	if in.QuotaItemsPerMinute != nil && *in.QuotaItemsPerMinute >= 0 {
+		quota = *in.QuotaItemsPerMinute
+	}
+	if err := s.store.UpdateProject(pid, in.Name, in.Platform, retentionDays, quota); err != nil {
 		return err
 	}
 	return s.getProject(c)

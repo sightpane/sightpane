@@ -43,6 +43,7 @@ const userKey = "sightpane_user"
 type Server struct {
 	store    *store.Store
 	notifier *alert.Notifier
+	limiter  *IngestLimiter
 	// ui serves the dashboard: a directory when SIGHTPANE_UI_DIR is set, otherwise
 	// the small embedded placeholder page.
 	ui fiber.Handler
@@ -51,12 +52,21 @@ type Server struct {
 // New builds the Fiber app. [uiDir] wins when non-empty; [embedded] is the
 // fallback filesystem compiled into the binary. Either may be absent, in which
 // case only the API is served.
-func New(st *store.Store, notifier *alert.Notifier, uiDir string, embedded fs.FS) *fiber.App {
+func New(st *store.Store, notifier *alert.Notifier, uiDir string, embedded fs.FS, defaultIngestRate ...int) *fiber.App {
 	if notifier == nil {
 		notifier = alert.NewNotifier(st, config.Config{PublicURL: "http://localhost:8790"})
 	}
 	st.OnIssueEvent(notifier.Enqueue)
-	s := &Server{store: st, notifier: notifier, ui: uiHandler(uiDir, embedded)}
+	defaultRate := 0
+	if len(defaultIngestRate) > 0 {
+		defaultRate = defaultIngestRate[0]
+	}
+	s := &Server{
+		store:    st,
+		notifier: notifier,
+		limiter:  NewIngestLimiter(defaultRate),
+		ui:       uiHandler(uiDir, embedded),
+	}
 
 	app := fiber.New(fiber.Config{
 		AppName: "sightpane",

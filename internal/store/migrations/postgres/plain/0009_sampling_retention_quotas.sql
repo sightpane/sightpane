@@ -1,0 +1,1 @@
+-- plain postgres: retention and quotas

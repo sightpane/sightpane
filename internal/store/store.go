@@ -24,6 +24,7 @@ import (
 	"log"
 	"path/filepath"
 	"strings"
+	"sync"
 
 	"sightpane/internal/apierr"
 	"sightpane/internal/blob"
@@ -52,6 +53,25 @@ type Store struct {
 	connName string
 	// onIssueEvent is called when new or regressed issues are committed by Ingest.
 	onIssueEvent func([]IssueEvent)
+	quotaMu      sync.RWMutex
+	droppedQuota map[int64]int
+}
+
+// RecordDroppedQuota tracks rejected items due to project ingest quota exceeded.
+func (s *Store) RecordDroppedQuota(projectID int64, count int) {
+	s.quotaMu.Lock()
+	defer s.quotaMu.Unlock()
+	if s.droppedQuota == nil {
+		s.droppedQuota = make(map[int64]int)
+	}
+	s.droppedQuota[projectID] += count
+}
+
+// DroppedQuota returns total items dropped due to quota overflow.
+func (s *Store) DroppedQuota(projectID int64) int {
+	s.quotaMu.RLock()
+	defer s.quotaMu.RUnlock()
+	return s.droppedQuota[projectID]
 }
 
 // OnIssueEvent registers a callback triggered after ingest commits new or regressed issues.

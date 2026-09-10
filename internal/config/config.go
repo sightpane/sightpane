@@ -31,6 +31,9 @@ type Config struct {
 	// TimescaleDB retention policy, so it does nothing on a Postgres without the
 	// extension. Zero keeps everything forever.
 	RetentionDays int
+	// IngestRate sets the default items-per-minute rate limit for envelope ingest.
+	// 0 means unlimited. Projects can override this with quota_items_per_minute.
+	IngestRate int
 
 	// AdminEmail/AdminPassword are created on first start if absent, so a fresh
 	// install can be logged into without a setup step.
@@ -91,7 +94,8 @@ func Load() Config {
 		Addr:             env("ADDR", ":8790"),
 		DataDir:          env("DATA", "./data"),
 		DB:               env("DB", ""),
-		RetentionDays:    envInt("RETENTION_DAYS", 90),
+		RetentionDays:    envInt("RETENTION_DAYS", 30),
+		IngestRate:       envInt("INGEST_RATE", 0),
 		SourceMapCacheMB: envInt("SOURCEMAP_CACHE_MB", 128),
 		AdminEmail:       env("ADMIN_EMAIL", "admin@sightpane.local"),
 		AdminPassword:    env("ADMIN_PASSWORD", "admin123"),

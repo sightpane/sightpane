@@ -33,6 +33,7 @@ type ProjectStats struct {
 	Events     int         `json:"events"`
 	Frames     int         `json:"frames"`
 	OpenIssues int         `json:"open_issues"`
+	Dropped    int         `json:"dropped"`
 	CrashFree  float64     `json:"crash_free"` // share of sessions with no error, 0–1
 	Daily      []DayStat   `json:"daily"`
 	Platforms  []NameCount `json:"platforms"`
@@ -50,7 +51,7 @@ func (s *Store) Stats(projectID int64, days int) (*ProjectStats, error) {
 	}
 	now := time.Now().UTC()
 	since := now.AddDate(0, 0, -(days - 1)).Truncate(24 * time.Hour)
-	st := &ProjectStats{Days: days, Platforms: []NameCount{}, Releases: []NameCount{}, TopIssues: []Issue{}, TopEvents: []NameCount{}}
+	st := &ProjectStats{Days: days, Dropped: s.DroppedQuota(projectID), Platforms: []NameCount{}, Releases: []NameCount{}, TopIssues: []Issue{}, TopEvents: []NameCount{}}
 	// Every query below takes the same two parameters in the same order, which
 	// is what lets fill and nameCounts stay one-liners.
 	from := since

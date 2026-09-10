@@ -49,7 +49,7 @@ client (a screen producing errors in an infinite loop) drowns the whole project.
 
 ## Acceptance
 
-- [ ] 429 + `Retry-After` produce correct backoff in the SDK (test: fake transport returns 429)
-- [ ] The retention job deletes old sessions + frame directories and leaves recent ones alone (temp dir test)
-- [ ] Sampling: with `sessionSampleRate: 0` no frames/breadcrumbs are sent, errors are
-- [ ] README env table
+- [x] 429 + `Retry-After` produce correct backoff in the SDK (test: fake transport returns 429)
+- [x] The retention job deletes old sessions + frame directories and leaves recent ones alone (temp dir test)
+- [x] Sampling: with `sessionSampleRate: 0` no frames/breadcrumbs are sent, errors are
+- [x] README env table

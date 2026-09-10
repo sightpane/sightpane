@@ -18,13 +18,15 @@ import (
 )
 
 type Project struct {
-	ID        int64  `json:"id"`
-	Name      string `json:"name"`
-	APIKey    string `json:"api_key"`
-	Platform  string `json:"platform"`
-	CreatedBy *int64 `json:"created_by"`
-	CreatedAt string `json:"created_at"`
-	Role      string `json:"role,omitempty"`
+	ID                  int64  `json:"id"`
+	Name                string `json:"name"`
+	APIKey              string `json:"api_key"`
+	Platform            string `json:"platform"`
+	CreatedBy           *int64 `json:"created_by"`
+	CreatedAt           string `json:"created_at"`
+	RetentionDays       int    `json:"retention_days"`
+	QuotaItemsPerMinute int    `json:"quota_items_per_minute"`
+	Role                string `json:"role,omitempty"`
 	// Summary counters, filled in for the list view so it needs no extra request
 	// per project.
 	Sessions24h int `json:"sessions_24h"`
@@ -32,11 +34,11 @@ type Project struct {
 	OpenIssues  int `json:"open_issues"`
 }
 
-const projectCols = `id, name, api_key, platform, created_by, created_at`
+const projectCols = `id, name, api_key, platform, created_by, created_at, retention_days, quota_items_per_minute`
 
 func scanProject(sc interface{ Scan(...any) error }) (*Project, error) {
 	p := &Project{}
-	if err := sc.Scan(&p.ID, &p.Name, &p.APIKey, &p.Platform, &p.CreatedBy, tsCol{&p.CreatedAt}); err != nil {
+	if err := sc.Scan(&p.ID, &p.Name, &p.APIKey, &p.Platform, &p.CreatedBy, tsCol{&p.CreatedAt}, &p.RetentionDays, &p.QuotaItemsPerMinute); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, ErrNotFound
 		}
@@ -83,7 +85,7 @@ func (s *Store) CreateProject(name, platform, key string, owner *int64) (*Projec
 			return nil, err
 		}
 	}
-	return &Project{ID: id, Name: name, APIKey: key, Platform: platform, CreatedBy: owner, CreatedAt: now.Format(time.RFC3339Nano)}, nil
+	return &Project{ID: id, Name: name, APIKey: key, Platform: platform, CreatedBy: owner, CreatedAt: now.Format(time.RFC3339Nano), RetentionDays: 30, QuotaItemsPerMinute: 0}, nil
 }
 
 func (s *Store) ProjectByKey(key string) (*Project, error) {
@@ -129,7 +131,7 @@ func (s *Store) fillProjectCounters(p *Project) {
 // with the role they hold there, which is what the dashboard uses to decide
 // which owner-only actions to show.
 func (s *Store) ListProjectsForUser(userID int64) ([]Project, error) {
-	rows, err := s.db.Query(`SELECT p.id, p.name, p.api_key, p.platform, p.created_by, p.created_at, m.role FROM projects p JOIN project_members m ON m.project_id=p.id WHERE m.user_id=$1 ORDER BY p.name`, userID)
+	rows, err := s.db.Query(`SELECT p.id, p.name, p.api_key, p.platform, p.created_by, p.created_at, p.retention_days, p.quota_items_per_minute, m.role FROM projects p JOIN project_members m ON m.project_id=p.id WHERE m.user_id=$1 ORDER BY p.name`, userID)
 	if err != nil {
 		return nil, err
 	}
@@ -137,7 +139,7 @@ func (s *Store) ListProjectsForUser(userID int64) ([]Project, error) {
 	out := []Project{}
 	for rows.Next() {
 		var p Project
-		if err := rows.Scan(&p.ID, &p.Name, &p.APIKey, &p.Platform, &p.CreatedBy, tsCol{&p.CreatedAt}, &p.Role); err != nil {
+		if err := rows.Scan(&p.ID, &p.Name, &p.APIKey, &p.Platform, &p.CreatedBy, tsCol{&p.CreatedAt}, &p.RetentionDays, &p.QuotaItemsPerMinute, &p.Role); err != nil {
 			return nil, err
 		}
 		out = append(out, p)
@@ -151,8 +153,8 @@ func (s *Store) ListProjectsForUser(userID int64) ([]Project, error) {
 	return out, nil
 }
 
-func (s *Store) UpdateProject(id int64, name, platform string) error {
-	res, err := s.db.Exec(`UPDATE projects SET name=$1, platform=$2 WHERE id=$3`, strings.TrimSpace(name), platform, id)
+func (s *Store) UpdateProject(id int64, name, platform string, retentionDays, quotaItemsPerMinute int) error {
+	res, err := s.db.Exec(`UPDATE projects SET name=$1, platform=$2, retention_days=$3, quota_items_per_minute=$4 WHERE id=$5`, strings.TrimSpace(name), platform, retentionDays, quotaItemsPerMinute, id)
 	if err != nil {
 		return err
 	}

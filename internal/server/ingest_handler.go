@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"log"
+	"strconv"
 
 	"github.com/gofiber/fiber/v3"
 
@@ -55,6 +56,25 @@ func (s *Server) ingest(c fiber.Ctx) error {
 	if err := json.Unmarshal(c.Body(), &env); err != nil {
 		return apierr.New(fiber.StatusBadRequest, apierr.CodeBadJSON, "invalid json: "+err.Error())
 	}
+
+	// Rate limiting / quota check
+	itemCount := len(env.Items)
+	if itemCount == 0 {
+		itemCount = 1
+	}
+	if s.limiter != nil {
+		allowed, retryAfter := s.limiter.Allow(p.ID, p.QuotaItemsPerMinute, itemCount)
+		if !allowed {
+			s.store.RecordDroppedQuota(p.ID, itemCount)
+			c.Set("Retry-After", strconv.Itoa(retryAfter))
+			return c.Status(fiber.StatusTooManyRequests).JSON(fiber.Map{
+				"error":       "quota exceeded",
+				"rejected":    itemCount,
+				"retry_after": retryAfter,
+			})
+		}
+	}
+
 	res, err := s.store.Ingest(c.Context(), p.ID, &env, clientIP(c))
 	if err != nil {
 		// Logged because a malformed envelope is a bug in the SDK or in us, and

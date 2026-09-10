@@ -90,10 +90,44 @@ func main() {
 	}
 
 	embedded, _ := fs.Sub(uiFS, "ui")
-	app := server.New(st, notifier, cfg.UIDir, embedded)
+	app := server.New(st, notifier, cfg.UIDir, embedded, cfg.IngestRate)
 
-	log.Printf("sightpane listening on %s (db %s, data %s, frames %s, project %q key %q, admin %s, proxy_protocol=%v)",
-		cfg.Addr, st.Driver(), cfg.DataDir, st.Frames(), cfg.DefaultProject, cfg.DefaultKey, cfg.AdminEmail, cfg.ProxyProtocol)
+	log.Printf("sightpane listening on %s (db %s, data %s, frames %s, project %q key %q, admin %s, proxy_protocol=%v, retention=%dd, ingest_rate=%d/min)",
+		cfg.Addr, st.Driver(), cfg.DataDir, st.Frames(), cfg.DefaultProject, cfg.DefaultKey, cfg.AdminEmail, cfg.ProxyProtocol, cfg.RetentionDays, cfg.IngestRate)
+
+	stop := make(chan os.Signal, 1)
+	signal.Notify(stop, os.Interrupt, syscall.SIGTERM)
+	defer signal.Stop(stop)
+
+	// Daily data retention job
+	retentionTicker := time.NewTicker(24 * time.Hour)
+	go func() {
+		// Run initial sweep after short delay
+		select {
+		case <-time.After(1 * time.Minute):
+			if n, err := st.PurgeExpired(context.Background(), cfg.RetentionDays); err != nil {
+				log.Printf("retention cleanup: %v", err)
+			} else if n > 0 {
+				log.Printf("retention cleanup: purged %d expired sessions", n)
+			}
+		case <-stop:
+			retentionTicker.Stop()
+			return
+		}
+		for {
+			select {
+			case <-retentionTicker.C:
+				if n, err := st.PurgeExpired(context.Background(), cfg.RetentionDays); err != nil {
+					log.Printf("retention cleanup: %v", err)
+				} else if n > 0 {
+					log.Printf("retention cleanup: purged %d expired sessions", n)
+				}
+			case <-stop:
+				retentionTicker.Stop()
+				return
+			}
+		}
+	}()
 
 	// Serve from another goroutine so the signal handler below can shut the app
 	// down instead of the process being killed mid-request. Postgres survives a
@@ -103,10 +137,6 @@ func main() {
 	go func() {
 		serveErr <- app.Listener(ln, fiber.ListenConfig{DisableStartupMessage: true})
 	}()
-
-	stop := make(chan os.Signal, 1)
-	signal.Notify(stop, os.Interrupt, syscall.SIGTERM)
-	defer signal.Stop(stop)
 
 	select {
 	case err := <-serveErr:

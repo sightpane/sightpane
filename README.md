@@ -68,7 +68,8 @@ no `ALTER` list to keep in step any more.
 |---|---|---|
 | `SIGHTPANE_ADDR` | `:8790` | listen address |
 | `SIGHTPANE_DB` | — | **required**: `postgres://user:pw@host:5432/sightpane?sslmode=disable`, or a libpq key/value string |
-| `SIGHTPANE_RETENTION_DAYS` | `90` | items older than this are dropped by a TimescaleDB retention policy; `0` keeps everything |
+| `SIGHTPANE_RETENTION_DAYS` | `30` | items and sessions older than this are dropped by the retention policy and daily cleanup; `0` keeps everything |
+| `SIGHTPANE_INGEST_RATE` | `0` | default envelope ingest quota in items per minute; `0` = unlimited (projects can override) |
 | `SIGHTPANE_SOURCEMAP_CACHE_MB` | `128` | parsed release source maps held in memory; a dart2js map is 10–30 MB |
 | `SIGHTPANE_DATA` | `./data` | `frames/<session>/<seq>.png`, when the frames are on disk |
 | `SIGHTPANE_ADMIN_EMAIL` / `SIGHTPANE_ADMIN_PASSWORD` | `admin@sightpane.local` / `admin123` | admin created on first start (if missing) |
