@@ -125,7 +125,7 @@ func BuildSessionSearchWhere(q string, nextPlaceholder func(any) string) (string
 			// Free text search across user, route, ip
 			p := "%" + tok.Value + "%"
 			ph := nextPlaceholder(p)
-			clauses = append(clauses, fmt.Sprintf("(user_id ILIKE %s OR current_route ILIKE %s OR ip ILIKE %s OR user_json::text ILIKE %s)", ph, ph, ph, ph))
+			clauses = append(clauses, fmt.Sprintf("(user_id ILIKE %s OR current_route ILIKE %s OR ip ILIKE %s OR user_json::text ILIKE %s OR device_json::text ILIKE %s)", ph, ph, ph, ph, ph))
 			continue
 		}
 
@@ -136,6 +136,24 @@ func BuildSessionSearchWhere(q string, nextPlaceholder func(any) string) (string
 		case tok.Key == "platform":
 			ph := nextPlaceholder(strings.ToLower(tok.Value))
 			clauses = append(clauses, fmt.Sprintf("LOWER(platform) = %s", ph))
+		case tok.Key == "category" || tok.Key == "platform_category":
+			val := strings.ToLower(tok.Value)
+			ph := nextPlaceholder(val)
+			phLike := nextPlaceholder("%" + val + "%")
+			clauses = append(clauses, fmt.Sprintf("(LOWER(platform) = %s OR LOWER(device_json->>'platform_category') = %s OR device_json->>'platform_category' ILIKE %s)", ph, ph, phLike))
+		case tok.Key == "os":
+			ph := nextPlaceholder("%" + tok.Value + "%")
+			phExact := nextPlaceholder(strings.ToLower(tok.Value))
+			clauses = append(clauses, fmt.Sprintf("(device_json->>'os' ILIKE %s OR LOWER(platform) = %s)", ph, phExact))
+		case tok.Key == "kernel":
+			ph := nextPlaceholder("%" + tok.Value + "%")
+			clauses = append(clauses, fmt.Sprintf("device_json->>'kernel' ILIKE %s", ph))
+		case tok.Key == "browser_version":
+			ph := nextPlaceholder("%" + tok.Value + "%")
+			clauses = append(clauses, fmt.Sprintf("device_json->>'browser_version' ILIKE %s", ph))
+		case tok.Key == "arch":
+			ph := nextPlaceholder("%" + tok.Value + "%")
+			clauses = append(clauses, fmt.Sprintf("device_json->>'arch' ILIKE %s", ph))
 		case tok.Key == "browser":
 			ph := nextPlaceholder("%" + tok.Value + "%")
 			clauses = append(clauses, fmt.Sprintf("browser ILIKE %s", ph))

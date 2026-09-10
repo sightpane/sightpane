@@ -164,15 +164,8 @@ func (s *Store) Ingest(ctx context.Context, projectID int64, env *Envelope, ip s
 	}
 	_ = json.Unmarshal([]byte(userJSON), &u)
 	userID = u.ID
-	deviceJSON := rawOr(env.Session.Device, "{}")
-	var d struct {
-		Platform string `json:"platform"`
-		Release  string `json:"release"`
-		Browser  string `json:"browser"`
-		OS       string `json:"os"`
-		UA       string `json:"user_agent"`
-	}
-	_ = json.Unmarshal([]byte(deviceJSON), &d)
+	rawDev := rawOr(env.Session.Device, "{}")
+	deviceJSON, d := EnrichDeviceJSON(rawDev)
 	propsJSON := rawOr(env.Session.Props, "{}")
 
 	// Privacy & PII settings
