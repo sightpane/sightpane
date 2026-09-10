@@ -47,6 +47,7 @@ type itemHead struct {
 	PNG       string `json:"png"`
 	Taps      any    `json:"taps"`
 	Category  string `json:"category"`
+	Kind      string `json:"kind"`
 	Route     string `json:"route"`
 	// Frames is the stack the SDK already parsed out of the browser's own
 	// format. It is only sent by a web build, where `stack` is minified
@@ -212,14 +213,16 @@ func (s *Store) Ingest(ctx context.Context, projectID int64, env *Envelope, ip s
 	}
 	defer tx.Rollback()
 
-	_, err = tx.Exec(`INSERT INTO sessions(id, project_id, started_at, last_seen_at, user_id, user_json, device_json, props_json, platform, release, ip, browser, visitor_key, current_route)
-		VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
+	_, err = tx.Exec(`INSERT INTO sessions(id, project_id, started_at, last_seen_at, user_id, user_json, device_json, props_json, platform, release, ip, browser, visitor_key, current_route, sdk_name, sdk_version)
+		VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)
 		ON CONFLICT(id) DO UPDATE SET last_seen_at=excluded.last_seen_at, user_id=excluded.user_id, user_json=excluded.user_json,
 		  device_json=excluded.device_json, props_json=excluded.props_json, platform=excluded.platform, release=excluded.release,
-		  ip=CASE WHEN $15='none' THEN '' WHEN excluded.ip='' THEN sessions.ip ELSE excluded.ip END,
+		  ip=CASE WHEN $17='none' THEN '' WHEN excluded.ip='' THEN sessions.ip ELSE excluded.ip END,
 		  browser=excluded.browser, visitor_key=excluded.visitor_key,
-		  current_route=CASE WHEN excluded.current_route='' THEN sessions.current_route ELSE excluded.current_route END`,
-		env.Session.ID, projectID, started, now, userID, userJSON, deviceJSON, propsJSON, d.Platform, d.Release, ip, browser, visitor, route, storeIP)
+		  current_route=CASE WHEN excluded.current_route='' THEN sessions.current_route ELSE excluded.current_route END,
+		  sdk_name=CASE WHEN excluded.sdk_name!='' THEN excluded.sdk_name ELSE sessions.sdk_name END,
+		  sdk_version=CASE WHEN excluded.sdk_version!='' THEN excluded.sdk_version ELSE sessions.sdk_version END`,
+		env.Session.ID, projectID, started, now, userID, userJSON, deviceJSON, propsJSON, d.Platform, d.Release, ip, browser, visitor, route, env.SDK.Name, env.SDK.Version, storeIP)
 	if err != nil {
 		return nil, err
 	}
@@ -284,7 +287,7 @@ func (s *Store) Ingest(ctx context.Context, projectID int64, env *Envelope, ip s
 					symbolicated = string(b)
 				}
 			}
-			fp, title := fingerprintOf(h.Exception, h.Message, h.Stack, resolved)
+			fp, title := fingerprintOf(h.Exception, h.Message, h.Stack, env.SDK.Name, resolved)
 
 			// Check fingerprint rules for the project
 			rules, _ := s.ListFingerprintRules(projectID)
@@ -409,13 +412,19 @@ func (s *Store) Ingest(ctx context.Context, projectID int64, env *Envelope, ip s
 			if _, err := tx.Exec(`UPDATE sessions SET ended_at=NULL WHERE id=$1`, env.Session.ID); err != nil {
 				return nil, err
 			}
-		case "event", "breadcrumb", "pointer":
+		case "event", "breadcrumb", "pointer", "dom":
 			name := h.Name
 			if h.Type == "breadcrumb" {
 				name = h.Category
 			}
 			if h.Type == "pointer" {
 				name = "pointer"
+			}
+			if h.Type == "dom" {
+				name = h.Kind
+				if name == "" {
+					name = "dom"
+				}
 			}
 			if _, err := tx.Exec(`INSERT INTO items(session_id, project_id, ts, type, name, body_json) VALUES($1,$2,$3,$4,$5,$6)`, env.Session.ID, projectID, ts, h.Type, name, string(raw)); err != nil {
 				return nil, err

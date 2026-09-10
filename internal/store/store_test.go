@@ -57,4 +57,33 @@ func TestFingerprint(t *testing.T) {
 	if f != g {
 		t.Fatalf("framework-only stacks should group by message")
 	}
+
+	// JavaScript stacks: SDK frames and node_modules are skipped, and line/col
+	// numbers are stripped so errors group across minor edits.
+	jsA, _ := FingerprintWithSDK("TypeError", "Cannot read properties of undefined",
+		"    at renderItem (webpack://app/src/components/List.tsx:42:15)\n"+
+			"    at App (webpack://app/src/App.tsx:18:7)", "@sightpane/browser")
+	jsB, _ := FingerprintWithSDK("TypeError", "Cannot read properties of undefined",
+		"    at renderItem (webpack://app/src/components/List.tsx:50:20)\n"+
+			"    at App (webpack://app/src/App.tsx:22:9)", "@sightpane/browser")
+	if jsA != jsB {
+		t.Fatalf("JS line numbers must not change the fingerprint")
+	}
+
+	// SDK frames and node_modules frames must be skipped in JS stacks.
+	jsWithSDK, _ := FingerprintWithSDK("TypeError", "Cannot read properties of undefined",
+		"    at captureException (node_modules/@sightpane/browser/dist/index.js:10:5)\n"+
+			"    at renderItem (webpack://app/src/components/List.tsx:42:15)\n"+
+			"    at App (webpack://app/src/App.tsx:18:7)\n"+
+			"    at runWithPriority (node_modules/react-dom/cjs/react-dom.production.min.js:25:31)", "@sightpane/browser")
+	if jsWithSDK != jsA {
+		t.Fatalf("JS node_modules and SDK frames must not change the fingerprint")
+	}
+
+	jsC, _ := FingerprintWithSDK("TypeError", "Cannot read properties of undefined",
+		"    at otherFunction (webpack://app/src/components/List.tsx:42:15)", "@sightpane/browser")
+	if jsA == jsC {
+		t.Fatalf("different JS frames must differ")
+	}
 }
+

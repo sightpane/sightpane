@@ -148,16 +148,16 @@ under it (it misleads about what the product is).
 - [x] an existing deployment keeps working across the rename — `X-Hog-Key`,
       `HOG_*`, `hog.db`, the browser's stored session, and `package:flutter_hog/`
       stack frames — each pinned by a test
-- [ ] the npm scope `@sightpane` is registered
-- [ ] `sessions.sdk_name` / `sdk_version` arrive via the `ALTER` list and are
+- [x] the npm scope `@sightpane` is registered / reserved for packages (@sightpane/browser, @sightpane/react, @sightpane/react-native)
+- [x] `sessions.sdk_name` / `sdk_version` arrive via the `ALTER` list and are
       filled from the envelope; sessions recorded before are treated as Flutter
-- [ ] `TestFingerprint` still passes unchanged, and a new case pins that a
+- [x] `TestFingerprint` still passes unchanged, and a new case pins that a
       JavaScript stack groups by its own rules
-- [ ] a React Native SDK sends errors, events, breadcrumbs, navigation and frames
+- [x] a React Native SDK sends errors, events, breadcrumbs, navigation and frames
       to an unmodified backend, and its sessions play in the dashboard
-- [ ] a browser SDK sends `dom` items; an old backend counts them as `rejected`
+- [x] a browser SDK sends `dom` items; an old backend counts them as `rejected`
       without failing the envelope
-- [ ] the dashboard picks the player from what the session contains, and shows a
+- [x] the dashboard picks the player from what the session contains, and shows a
       setup snippet for the SDK the project actually uses
-- [ ] `go test ./...`, `flutter test` in `package/` and `frontend/` all green;
+- [x] `go test ./...`, `flutter test` in `package/` and `frontend/` all green;
       the Flutter SDK's behaviour is untouched throughout

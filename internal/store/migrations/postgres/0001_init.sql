@@ -62,7 +62,9 @@ CREATE TABLE IF NOT EXISTS sessions (
   ip TEXT NOT NULL DEFAULT '',
   browser TEXT NOT NULL DEFAULT '',
   visitor_key TEXT NOT NULL DEFAULT '',
-  current_route TEXT NOT NULL DEFAULT ''
+  current_route TEXT NOT NULL DEFAULT '',
+  sdk_name TEXT NOT NULL DEFAULT '',
+  sdk_version TEXT NOT NULL DEFAULT ''
 );
 
 CREATE INDEX IF NOT EXISTS sessions_project_seen ON sessions(project_id, last_seen_at DESC);

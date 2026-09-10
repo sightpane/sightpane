@@ -28,7 +28,13 @@ var (
 // three stack frames that belong to application code, and the title from the
 // type plus the first line of the message (truncated).
 func Fingerprint(exception, message, stack string) (fp string, title string) {
-	return fingerprintOf(exception, message, stack, nil)
+	return fingerprintOf(exception, message, stack, "", nil)
+}
+
+// FingerprintWithSDK is Fingerprint keyed by the SDK name, so JavaScript
+// stacks use JS-specific skip rules and frame normalisation.
+func FingerprintWithSDK(exception, message, stack, sdkName string) (fp string, title string) {
+	return fingerprintOf(exception, message, stack, sdkName, nil)
 }
 
 // fingerprintOf is Fingerprint with the frames a source map resolved, when there
@@ -43,10 +49,14 @@ func Fingerprint(exception, message, stack string) (fp string, title string) {
 // Matching them would mean keying on the basename, which regroups every issue
 // ever recorded and collides two files of the same name in different
 // directories — a bigger decision than this function.
-func fingerprintOf(exception, message, stack string, resolved []symbol.Resolved) (fp string, title string) {
+func fingerprintOf(exception, message, stack, sdkName string, resolved []symbol.Resolved) (fp string, title string) {
 	frames := resolvedFrames(resolved, 3)
 	if len(frames) == 0 {
-		frames = appFrames(stack, 3)
+		if isJSSDK(sdkName) {
+			frames = jsAppFrames(stack, 3)
+		} else {
+			frames = appFrames(stack, 3)
+		}
 	}
 	var key string
 	if len(frames) > 0 {
@@ -133,6 +143,57 @@ func appFrames(stack string, n int) []string {
 			continue
 		}
 		l = framePref.ReplaceAllString(l, "")
+		l = lineCol.ReplaceAllString(l, "")
+		out = append(out, l)
+		if len(out) == n {
+			break
+		}
+	}
+	return out
+}
+
+func isJSSDK(sdk string) bool {
+	s := strings.ToLower(sdk)
+	return strings.Contains(s, "browser") ||
+		strings.Contains(s, "react") ||
+		strings.Contains(s, "js") ||
+		strings.Contains(s, "node") ||
+		strings.Contains(s, "web")
+}
+
+func isJSFrameworkFrame(l string) bool {
+	for _, p := range []string{
+		"node_modules/", "webpack-internal:", "@sightpane/",
+		"node:internal", "sightpane-js", "sightpane-browser",
+		"sightpane-react", "sightpane/",
+	} {
+		if strings.Contains(l, p) {
+			return true
+		}
+	}
+	return false
+}
+
+var jsAtPref = regexp.MustCompile(`^\s*at\s+(async\s+)?`)
+
+func jsAppFrames(stack string, n int) []string {
+	var out []string
+	for _, line := range strings.Split(stack, "\n") {
+		l := strings.TrimSpace(line)
+		if l == "" {
+			continue
+		}
+		isV8 := strings.HasPrefix(l, "at ")
+		isSafari := strings.Contains(l, "@")
+		if !isV8 && !isSafari && !strings.Contains(l, "(") && !strings.Contains(l, "/") {
+			continue
+		}
+		if isJSFrameworkFrame(l) {
+			continue
+		}
+		if isV8 {
+			l = jsAtPref.ReplaceAllString(l, "")
+		}
 		l = lineCol.ReplaceAllString(l, "")
 		out = append(out, l)
 		if len(out) == n {

@@ -1609,6 +1609,108 @@ func TestPerformanceEndpoints(t *testing.T) {
 	}
 }
 
+func TestReactNativeSDKAndBrowserDOMSDK(t *testing.T) {
+	app, _ := newTestServer(t)
+	now := time.Now().UTC().Format(time.RFC3339)
+
+	// 1. React Native SDK: sends error with JS stack, event, navigation, and frame PNG
+	rnSessionID := "rn-session-123"
+	rnEnv := fmt.Sprintf(`{
+		"sdk": {"name": "@sightpane/react-native", "version": "0.1.0"},
+		"session": {
+			"id": "%s",
+			"started_at": "%s",
+			"user": {"id": "rn_user_1"},
+			"device": {"platform": "ios", "release": "1.2.0"}
+		},
+		"items": [
+			{"type": "breadcrumb", "category": "navigation", "message": "/dashboard", "ts": "%s"},
+			{"type": "event", "name": "cart_click", "ts": "%s"},
+			{
+				"type": "error",
+				"exception": "TypeError",
+				"message": "Cannot read property 'id' of undefined",
+				"stack": "    at onPress (webpack://app/src/screens/Cart.tsx:42:10)\n    at emit (node_modules/react-native/Libraries/Renderer/implementations/ReactNativeRenderer.js:100:1)",
+				"ts": "%s"
+			},
+			{"type": "frame", "seq": 1, "width": 390, "height": 844, "png": "%s", "ts": "%s"}
+		]
+	}`, rnSessionID, now, now, now, now, tinyPNG, now)
+
+	rr := post(t, app, "/api/v1/envelope", "key1", json.RawMessage(rnEnv))
+	if rr.Code != 202 {
+		t.Fatalf("ingest rn envelope: %d %s", rr.Code, rr.Body.String())
+	}
+	var inRes store.IngestResult
+	_ = json.Unmarshal(rr.Body.Bytes(), &inRes)
+	if inRes.Accepted != 4 || inRes.Rejected != 0 {
+		t.Fatalf("expected 4 accepted, 0 rejected, got %+v", inRes)
+	}
+
+	var rnDetail store.SessionDetail
+	rr = get(t, app, "/api/v1/sessions/"+rnSessionID, &rnDetail)
+	if rr.Code != 200 {
+		t.Fatalf("get rn session: %d %s", rr.Code, rr.Body.String())
+	}
+	if rnDetail.SDKName != "@sightpane/react-native" || rnDetail.SDKVersion != "0.1.0" {
+		t.Fatalf("rn sdk name/version mismatch: %q %q", rnDetail.SDKName, rnDetail.SDKVersion)
+	}
+	if rnDetail.Platform != "ios" {
+		t.Fatalf("expected ios platform, got %s", rnDetail.Platform)
+	}
+	if rnDetail.FrameCount != 1 || len(rnDetail.Frames) != 1 {
+		t.Fatalf("expected 1 frame, got %d frames", len(rnDetail.Frames))
+	}
+	// Verify frame image endpoint works
+	rr = get(t, app, "/api/v1/sessions/"+rnSessionID+"/frames/1.png", nil)
+	if rr.Code != 200 {
+		t.Fatalf("expected frame 1 ok, got %d", rr.Code)
+	}
+
+	// 2. Browser DOM SDK: sends DOM mutation/snapshot items, and forward-compatibility rejects unknown item without failing envelope
+	webSessionID := "web-session-456"
+	webEnv := fmt.Sprintf(`{
+		"sdk": {"name": "@sightpane/browser", "version": "0.2.0"},
+		"session": {
+			"id": "%s",
+			"started_at": "%s",
+			"device": {"platform": "web", "browser": "Chrome"}
+		},
+		"items": [
+			{"type": "dom", "kind": "snapshot", "data": {"tree": "html"}, "ts": "%s"},
+			{"type": "dom", "kind": "mutation", "data": {"mutations": [1, 2]}, "ts": "%s"},
+			{"type": "future_unknown_type", "payload": "xyz", "ts": "%s"}
+		]
+	}`, webSessionID, now, now, now, now)
+
+	rr = post(t, app, "/api/v1/envelope", "key1", json.RawMessage(webEnv))
+	if rr.Code != 202 {
+		t.Fatalf("ingest web envelope: %d %s", rr.Code, rr.Body.String())
+	}
+	_ = json.Unmarshal(rr.Body.Bytes(), &inRes)
+	if inRes.Accepted != 2 || inRes.Rejected != 1 {
+		t.Fatalf("expected 2 accepted, 1 rejected for future unknown type, got %+v", inRes)
+	}
+
+	var webDetail store.SessionDetail
+	rr = get(t, app, "/api/v1/sessions/"+webSessionID, &webDetail)
+	if rr.Code != 200 {
+		t.Fatalf("get web session: %d %s", rr.Code, rr.Body.String())
+	}
+	if webDetail.SDKName != "@sightpane/browser" || webDetail.SDKVersion != "0.2.0" {
+		t.Fatalf("web sdk name/version mismatch: %q %q", webDetail.SDKName, webDetail.SDKVersion)
+	}
+	if !webDetail.HasDOM {
+		t.Fatalf("expected HasDOM to be true")
+	}
+	if len(webDetail.Items) != 2 {
+		t.Fatalf("expected 2 dom items, got %d", len(webDetail.Items))
+	}
+	if webDetail.Items[0].Type != "dom" || webDetail.Items[0].Name != "snapshot" {
+		t.Fatalf("expected dom snapshot item, got %+v", webDetail.Items[0])
+	}
+}
+
 
 
 
