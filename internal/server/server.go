@@ -144,6 +144,7 @@ func New(st *store.Store, notifier *alert.Notifier, uiDir string, embedded fs.FS
 	api.Get("/projects/:id/sessions", s.requireProject(roleViewer), s.listSessions)
 	api.Get("/projects/:id/issues", s.requireProject(roleViewer), s.listIssues)
 	api.Get("/projects/:id/events/summary", s.requireProject(roleViewer), s.eventSummary)
+	api.Get("/projects/:id/users", s.requireProject(roleViewer), s.listProjectUsers)
 	api.Delete("/projects/:id/users/:userId", s.requireProject(roleOwner), s.deleteUserData)
 	api.Get("/projects/:id/users/:userId/export", s.requireProject(roleViewer), s.exportUserData)
 

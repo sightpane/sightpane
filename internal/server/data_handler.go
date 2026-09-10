@@ -297,3 +297,16 @@ func (s *Server) deleteFingerprintRule(c fiber.Ctx) error {
 	return c.SendStatus(fiber.StatusNoContent)
 }
 
+func (s *Server) listProjectUsers(c fiber.Ctx) error {
+	days := queryInt(c, "days")
+	if days <= 0 {
+		days = 14
+	}
+	out, err := s.store.ListProjectUsers(c.Context(), pathID(c, "id"), days, c.Query("q"))
+	if err != nil {
+		return err
+	}
+	return c.JSON(out)
+}
+
+

@@ -1711,6 +1711,43 @@ func TestReactNativeSDKAndBrowserDOMSDK(t *testing.T) {
 	}
 }
 
+func TestUsersEndpoint(t *testing.T) {
+	app, _ := newTestServer(t)
+
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	env1 := fmt.Sprintf(`{
+		"sdk": {"name": "@sightpane/browser", "version": "1.0.0"},
+		"session": {
+			"id": "sess-user-u1",
+			"started_at": "%s",
+			"user": {"id": "kaslyer@example.com", "name": "Kaslyer"}
+		},
+		"items": [
+			{"type": "error", "message": "error 1", "exception": "Exception", "ts": "%s"}
+		]
+	}`, now, now)
+	rr := post(t, app, "/api/v1/envelope", "key1", json.RawMessage(env1))
+	if rr.Code != 202 {
+		t.Fatalf("ingest user session 1 failed: %d %s", rr.Code, rr.Body.String())
+	}
+
+	var res store.ProjectUsersResponse
+	rr = get(t, app, "/api/v1/projects/1/users?days=14", &res)
+	if rr.Code != 200 {
+		t.Fatalf("get project users: %d %s", rr.Code, rr.Body.String())
+	}
+	if res.TotalUsers < 1 {
+		t.Fatalf("expected at least 1 user, got %d", res.TotalUsers)
+	}
+	if len(res.Users) < 1 || res.Users[0].UserID != "kaslyer@example.com" {
+		t.Fatalf("expected user kaslyer@example.com, got %+v", res.Users)
+	}
+	if res.Users[0].Name != "Kaslyer" {
+		t.Errorf("expected user name Kaslyer, got %q", res.Users[0].Name)
+	}
+}
+
+
 
 
 

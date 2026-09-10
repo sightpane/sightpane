@@ -160,10 +160,14 @@ func (s *Store) Ingest(ctx context.Context, projectID int64, env *Envelope, ip s
 
 	userJSON, userID := rawOr(env.Session.User, "{}"), ""
 	var u struct {
-		ID string `json:"id"`
+		ID     string `json:"id"`
+		UserID string `json:"user_id"`
 	}
 	_ = json.Unmarshal([]byte(userJSON), &u)
 	userID = u.ID
+	if userID == "" {
+		userID = u.UserID
+	}
 	rawDev := rawOr(env.Session.Device, "{}")
 	deviceJSON, d := EnrichDeviceJSON(rawDev)
 	propsJSON := rawOr(env.Session.Props, "{}")
