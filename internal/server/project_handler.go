@@ -23,12 +23,16 @@ func (s *Server) listProjects(c fiber.Ctx) error {
 }
 
 func (s *Server) createProject(c fiber.Ctx) error {
-	var in struct{ Name, Platform string }
+	var in struct {
+		Name     string `json:"name"`
+		Platform string `json:"platform"`
+		OrgID    *int64 `json:"org_id"`
+	}
 	if err := c.Bind().JSON(&in); err != nil {
 		return badJSON()
 	}
 	uid := currentUser(c).ID
-	p, err := s.store.CreateProject(in.Name, in.Platform, "", &uid)
+	p, err := s.store.CreateProjectWithOrg(in.Name, in.Platform, "", &uid, in.OrgID)
 	if err != nil {
 		return err
 	}
@@ -115,8 +119,18 @@ func (s *Server) exportUserData(c fiber.Ctx) error {
 }
 
 func (s *Server) deleteProject(c fiber.Ctx) error {
-	if err := s.store.DeleteProject(pathID(c, "id")); err != nil {
+	pid := pathID(c, "id")
+	p, _ := s.store.ProjectByID(pid)
+	if err := s.store.DeleteProject(pid); err != nil {
 		return err
+	}
+	if p != nil && p.OrgID != nil {
+		u := currentUser(c)
+		var uid *int64
+		if u != nil && u.ID > 0 {
+			uid = &u.ID
+		}
+		_ = s.store.CreateAuditLog(*p.OrgID, nil, uid, "project.delete", fmt.Sprintf("project:%d (%s)", pid, p.Name), clientIP(c))
 	}
 	return c.JSON(fiber.Map{"deleted": true})
 }
@@ -124,9 +138,19 @@ func (s *Server) deleteProject(c fiber.Ctx) error {
 // rotateKey invalidates the old key immediately: envelopes still sent with it
 // are rejected, which is the point of rotating.
 func (s *Server) rotateKey(c fiber.Ctx) error {
-	key, err := s.store.RotateKey(pathID(c, "id"))
+	pid := pathID(c, "id")
+	p, _ := s.store.ProjectByID(pid)
+	key, err := s.store.RotateKey(pid)
 	if err != nil {
 		return err
+	}
+	if p != nil && p.OrgID != nil {
+		u := currentUser(c)
+		var uid *int64
+		if u != nil && u.ID > 0 {
+			uid = &u.ID
+		}
+		_ = s.store.CreateAuditLog(*p.OrgID, &pid, uid, "key.rotate", fmt.Sprintf("project:%d", pid), clientIP(c))
 	}
 	return c.JSON(fiber.Map{"api_key": key})
 }

@@ -27,10 +27,15 @@ func errorHandler(c fiber.Ctx, err error) error {
 	case errors.Is(err, store.ErrNotFound):
 		return writeErr(c, fiber.StatusNotFound, apierr.CodeNotFound, "not found")
 	}
-	// Fiber raises this for a body over BodyLimit before any handler runs.
+	// Fiber errors: body over limit or not found before route.
 	var fe *fiber.Error
-	if errors.As(err, &fe) && fe.Code == fiber.StatusRequestEntityTooLarge {
-		return writeErr(c, fe.Code, apierr.CodeEnvelopeTooBig, "envelope too large")
+	if errors.As(err, &fe) {
+		if fe.Code == fiber.StatusRequestEntityTooLarge {
+			return writeErr(c, fe.Code, apierr.CodeEnvelopeTooBig, "envelope too large")
+		}
+		if fe.Code == fiber.StatusNotFound {
+			return writeErr(c, fe.Code, apierr.CodeNotFound, "not found")
+		}
 	}
 	return writeErr(c, fiber.StatusInternalServerError, apierr.CodeInternal, err.Error())
 }

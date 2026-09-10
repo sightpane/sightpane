@@ -107,25 +107,45 @@ func New(st *store.Store, notifier *alert.Notifier, uiDir string, embedded fs.FS
 
 	// Projects. Middleware comes first in a Fiber route: every handler passed to
 	// api.Get/Post runs in argument order, so putting requireAuth second would
+	// Organizations, fine-grained roles, audit log and scoped tokens
+	api.Get("/orgs", s.requireAuth, s.listOrgs)
+	api.Post("/orgs", s.requireAuth, s.createOrg)
+	api.Get("/orgs/:id", s.requireOrg(roleViewer), s.getOrg)
+	api.Patch("/orgs/:id", s.requireOrg(roleAdmin), s.updateOrg)
+	api.Delete("/orgs/:id", s.requireOrg(roleOwner), s.deleteOrg)
+
+	api.Get("/orgs/:id/members", s.requireOrg(roleViewer), s.listOrgMembers)
+	api.Post("/orgs/:id/members", s.requireOrg(roleAdmin), s.addOrgMember)
+	api.Patch("/orgs/:id/members/:uid", s.requireOrg(roleAdmin), s.updateOrgMemberRole)
+	api.Delete("/orgs/:id/members/:uid", s.requireOrg(roleAdmin), s.removeOrgMember)
+
+	api.Get("/orgs/:id/audit", s.requireOrg(roleMember), s.listOrgAuditLogs)
+
+	api.Get("/orgs/:id/tokens", s.requireOrg(roleAdmin), s.listOrgAPITokens)
+	api.Post("/orgs/:id/tokens", s.requireOrg(roleAdmin), s.createOrgAPIToken)
+	api.Delete("/orgs/:id/tokens/:tokenId", s.requireOrg(roleAdmin), s.deleteOrgAPIToken)
+
+	// Projects. Middleware comes first in a Fiber route: every handler passed to
+	// api.Get/Post runs in argument order, so putting requireAuth second would
 	// run the handler with no user on the context.
 	// requireProject also resolves membership, so a non-member gets 404 rather
 	// than learning that the project exists.
 	api.Get("/projects", s.requireAuth, s.listProjects)
 	api.Post("/projects", s.requireAuth, s.createProject)
-	api.Get("/projects/:id", s.requireProject(roleMember), s.getProject)
+	api.Get("/projects/:id", s.requireProject(roleViewer), s.getProject)
 	api.Patch("/projects/:id", s.requireProject(roleOwner), s.updateProject)
 	api.Delete("/projects/:id", s.requireProject(roleOwner), s.deleteProject)
 	api.Post("/projects/:id/rotate-key", s.requireProject(roleOwner), s.rotateKey)
-	api.Get("/projects/:id/members", s.requireProject(roleMember), s.listMembers)
+	api.Get("/projects/:id/members", s.requireProject(roleViewer), s.listMembers)
 	api.Post("/projects/:id/members", s.requireProject(roleOwner), s.addMember)
 	api.Delete("/projects/:id/members/:uid", s.requireProject(roleOwner), s.removeMember)
-	api.Get("/projects/:id/stats", s.requireProject(roleMember), s.stats)
-	api.Get("/projects/:id/live", s.requireProject(roleMember), s.live)
-	api.Get("/projects/:id/sessions", s.requireProject(roleMember), s.listSessions)
-	api.Get("/projects/:id/issues", s.requireProject(roleMember), s.listIssues)
-	api.Get("/projects/:id/events/summary", s.requireProject(roleMember), s.eventSummary)
+	api.Get("/projects/:id/stats", s.requireProject(roleViewer), s.stats)
+	api.Get("/projects/:id/live", s.requireProject(roleViewer), s.live)
+	api.Get("/projects/:id/sessions", s.requireProject(roleViewer), s.listSessions)
+	api.Get("/projects/:id/issues", s.requireProject(roleViewer), s.listIssues)
+	api.Get("/projects/:id/events/summary", s.requireProject(roleViewer), s.eventSummary)
 	api.Delete("/projects/:id/users/:userId", s.requireProject(roleOwner), s.deleteUserData)
-	api.Get("/projects/:id/users/:userId/export", s.requireProject(roleMember), s.exportUserData)
+	api.Get("/projects/:id/users/:userId/export", s.requireProject(roleViewer), s.exportUserData)
 
 	// Alerts and notification channels (owner only).
 	api.Get("/projects/:id/alert-channels", s.requireProject(roleOwner), s.listAlertChannels)
@@ -139,16 +159,16 @@ func New(st *store.Store, notifier *alert.Notifier, uiDir string, embedded fs.FS
 	api.Delete("/projects/:id/alerts/:rid", s.requireProject(roleOwner), s.deleteAlertRule)
 
 	// Releases and release artifacts.
-	api.Get("/projects/:id/releases", s.requireProject(roleMember), s.listReleases)
-	api.Get("/projects/:id/releases/:release", s.requireProject(roleMember), s.getRelease)
-	api.Get("/projects/:id/release-artifacts", s.requireProject(roleMember), s.listReleaseArtifacts)
+	api.Get("/projects/:id/releases", s.requireProject(roleViewer), s.listReleases)
+	api.Get("/projects/:id/releases/:release", s.requireProject(roleViewer), s.getRelease)
+	api.Get("/projects/:id/release-artifacts", s.requireProject(roleViewer), s.listReleaseArtifacts)
 	api.Post("/projects/:id/releases/:release/sourcemaps", s.requireProject(roleOwner), s.uploadSourceMap)
 	api.Delete("/projects/:id/releases/:release/artifacts/:filename", s.requireProject(roleOwner), s.deleteReleaseArtifact)
 
 	// Performance monitoring.
-	api.Get("/projects/:id/performance", s.requireProject(roleMember), s.getPerformanceSummary)
-	api.Get("/projects/:id/performance/detail", s.requireProject(roleMember), s.getTransactionDetail)
-	api.Get("/projects/:id/performance/transactions/*", s.requireProject(roleMember), s.getTransactionDetail)
+	api.Get("/projects/:id/performance", s.requireProject(roleViewer), s.getPerformanceSummary)
+	api.Get("/projects/:id/performance/detail", s.requireProject(roleViewer), s.getTransactionDetail)
+	api.Get("/projects/:id/performance/transactions/*", s.requireProject(roleViewer), s.getTransactionDetail)
 
 
 	// Session and issue details are addressed globally, so each one resolves its
@@ -165,7 +185,7 @@ func New(st *store.Store, notifier *alert.Notifier, uiDir string, embedded fs.FS
 	api.Post("/issues/:id/comments", s.requireAuth, s.addIssueComment)
 
 	// Fingerprint rules
-	api.Get("/projects/:id/fingerprint-rules", s.requireProject(roleMember), s.listFingerprintRules)
+	api.Get("/projects/:id/fingerprint-rules", s.requireProject(roleViewer), s.listFingerprintRules)
 	api.Post("/projects/:id/fingerprint-rules", s.requireProject(roleOwner), s.createFingerprintRule)
 	api.Delete("/projects/:id/fingerprint-rules/:ruleId", s.requireProject(roleOwner), s.deleteFingerprintRule)
 

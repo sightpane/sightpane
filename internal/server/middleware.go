@@ -6,8 +6,10 @@
 package server
 
 import (
+	"fmt"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/gofiber/fiber/v3"
 
@@ -16,9 +18,24 @@ import (
 )
 
 const (
+	roleViewer = "viewer"
 	roleMember = "member"
+	roleAdmin  = "admin"
 	roleOwner  = "owner"
 )
+
+const (
+	apiTokenKey = "api_token"
+)
+
+func hasScope(scopes []string, target string) bool {
+	for _, s := range scopes {
+		if s == target || s == "*" {
+			return true
+		}
+	}
+	return false
+}
 
 // authenticate resolves the bearer token and puts the user on the context. It
 // deliberately does not call c.Next(): the caller decides when the rest of the
@@ -27,6 +44,22 @@ func (s *Server) authenticate(c fiber.Ctx) error {
 	tok := bearer(c)
 	if tok == "" {
 		return apierr.New(fiber.StatusUnauthorized, apierr.CodeLoginRequired, "login required")
+	}
+	if strings.HasPrefix(tok, "sp_") || strings.HasPrefix(tok, "hog_") {
+		apiToken, err := s.store.APITokenBySecret(tok)
+		if err != nil || (apiToken.ExpiresAt != nil && time.Now().After(*apiToken.ExpiresAt)) {
+			return apierr.New(fiber.StatusUnauthorized, apierr.CodeInvalidToken, "invalid or expired token")
+		}
+		c.Locals(apiTokenKey, apiToken)
+		if apiToken.CreatedBy != nil {
+			if u, err := s.store.UserByID(*apiToken.CreatedBy); err == nil {
+				c.Locals(userKey, u)
+			}
+		}
+		if c.Locals(userKey) == nil {
+			c.Locals(userKey, &store.User{ID: 0, Name: apiToken.Name, Email: "token@" + apiToken.Name})
+		}
+		return nil
 	}
 	u, err := s.store.UserByToken(tok)
 	if err != nil {
@@ -54,19 +87,115 @@ func (s *Server) requireProject(need string) fiber.Handler {
 		if err := s.authenticate(c); err != nil {
 			return err
 		}
-		if err := s.allow(c, pathID(c, "id"), need); err != nil {
+		pid := pathID(c, "id")
+		if err := s.allow(c, pid, need); err != nil {
 			return err
 		}
-		return c.Next()
+		err := c.Next()
+		if err == nil {
+			m := c.Method()
+			if m == fiber.MethodPost || m == fiber.MethodPatch || m == fiber.MethodDelete {
+				u := currentUser(c)
+				if u != nil && u.ID > 0 {
+					p, pErr := s.store.ProjectByID(pid)
+					if pErr == nil && p != nil && p.OrgID != nil {
+						_ = s.store.CreateAuditLog(*p.OrgID, &pid, &u.ID, m+" "+c.Path(), fmt.Sprintf("project:%d", pid), clientIP(c))
+					}
+				}
+			}
+		}
+		return err
+	}
+}
+
+func (s *Server) requireOrg(need string) fiber.Handler {
+	return func(c fiber.Ctx) error {
+		if err := s.authenticate(c); err != nil {
+			return err
+		}
+		orgID := pathID(c, "id")
+		if orgID == 0 {
+			orgID = pathID(c, "orgId")
+		}
+		u := currentUser(c)
+		if u == nil || u.ID == 0 {
+			return apierr.New(fiber.StatusUnauthorized, apierr.CodeLoginRequired, "login required")
+		}
+		role, _ := s.store.OrgMemberRole(orgID, u.ID)
+		if role == "" {
+			return apierr.New(fiber.StatusNotFound, apierr.CodeOrgNotFound, "organization not found")
+		}
+		c.Locals("org_role", role)
+		method := c.Method()
+		if role == roleViewer && method != fiber.MethodGet && method != fiber.MethodHead && method != fiber.MethodOptions {
+			return apierr.New(fiber.StatusForbidden, apierr.CodeForbidden, "viewer role cannot perform write actions")
+		}
+		switch need {
+		case roleOwner:
+			if role != roleOwner {
+				return apierr.New(fiber.StatusForbidden, "owner_role_required", "owner role required")
+			}
+		case roleAdmin:
+			if role != roleOwner && role != roleAdmin {
+				return apierr.New(fiber.StatusForbidden, "admin_role_required", "admin role required")
+			}
+		case roleMember:
+			if role != roleOwner && role != roleAdmin && role != roleMember {
+				return apierr.New(fiber.StatusForbidden, "member_role_required", "member role required")
+			}
+		}
+		err := c.Next()
+		if err == nil {
+			m := c.Method()
+			if m == fiber.MethodPost || m == fiber.MethodPatch || m == fiber.MethodDelete {
+				_ = s.store.CreateAuditLog(orgID, nil, &u.ID, m+" "+c.Path(), fmt.Sprintf("org:%d", orgID), clientIP(c))
+			}
+		}
+		return err
 	}
 }
 
 func (s *Server) allow(c fiber.Ctx, projectID int64, need string) error {
+	if apiTok, ok := c.Locals(apiTokenKey).(*store.APIToken); ok {
+		p, err := s.store.ProjectByID(projectID)
+		if err != nil || p == nil {
+			return apierr.New(fiber.StatusNotFound, apierr.CodeProjectNotFound, "project not found")
+		}
+		if p.OrgID == nil || *p.OrgID != apiTok.OrgID {
+			return apierr.New(fiber.StatusNotFound, apierr.CodeProjectNotFound, "project not found")
+		}
+		if apiTok.ProjectID != nil && *apiTok.ProjectID != projectID {
+			return apierr.New(fiber.StatusNotFound, apierr.CodeProjectNotFound, "project not found")
+		}
+		path := c.Path()
+		method := c.Method()
+		if strings.Contains(path, "/sourcemaps") {
+			if !hasScope(apiTok.Scopes, "sourcemaps:write") && !hasScope(apiTok.Scopes, "admin") && !hasScope(apiTok.Scopes, "*") {
+				return apierr.New(fiber.StatusForbidden, apierr.CodeForbidden, "token missing sourcemaps:write scope")
+			}
+			return nil
+		}
+		if method == fiber.MethodGet || method == fiber.MethodHead || method == fiber.MethodOptions {
+			if !hasScope(apiTok.Scopes, "read") && !hasScope(apiTok.Scopes, "admin") && !hasScope(apiTok.Scopes, "*") {
+				return apierr.New(fiber.StatusForbidden, apierr.CodeForbidden, "token missing read scope")
+			}
+			return nil
+		}
+		if !hasScope(apiTok.Scopes, "admin") && !hasScope(apiTok.Scopes, "*") {
+			return apierr.New(fiber.StatusForbidden, apierr.CodeForbidden, "token missing admin scope")
+		}
+		return nil
+	}
+
 	role, _ := s.store.MemberRole(projectID, currentUser(c).ID)
 	if role == "" {
 		return apierr.New(fiber.StatusNotFound, apierr.CodeProjectNotFound, "project not found")
 	}
-	if need == roleOwner && role != roleOwner {
+	method := c.Method()
+	if role == roleViewer && method != fiber.MethodGet && method != fiber.MethodHead && method != fiber.MethodOptions {
+		return apierr.New(fiber.StatusForbidden, apierr.CodeForbidden, "viewer role cannot perform write actions")
+	}
+	if need == roleOwner && role != roleOwner && role != roleAdmin {
 		return apierr.New(fiber.StatusForbidden, apierr.CodeProjectOwnerNeeded, "owner role required")
 	}
 	return nil

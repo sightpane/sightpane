@@ -219,15 +219,39 @@ func (s *Store) RemoveMember(projectID, userID int64) error {
 	return err
 }
 
-// MemberRole returns "" rather than an error when the user is not a member, so
-// a caller can treat "not a member" and "no such project" as the same answer.
-func (s *Store) MemberRole(projectID, userID int64) (string, error) {
-	var role string
-	err := s.db.QueryRow(`SELECT role FROM project_members WHERE project_id=$1 AND user_id=$2`, projectID, userID).Scan(&role)
-	if err != nil {
-		return "", nil
+func rankRole(r string) int {
+	switch r {
+	case "owner":
+		return 4
+	case "admin":
+		return 3
+	case "member":
+		return 2
+	case "viewer":
+		return 1
+	default:
+		return 0
 	}
-	return role, nil
+}
+
+// MemberRole returns the user's role on the project, checking the org role first,
+// and returning the highest privilege between org and project membership.
+// Returns "" when the user is not a member.
+func (s *Store) MemberRole(projectID, userID int64) (string, error) {
+	var orgRole, projRole string
+	_ = s.db.QueryRow(`
+		SELECT om.role
+		FROM projects p
+		JOIN org_members om ON om.org_id = p.org_id
+		WHERE p.id = $1 AND om.user_id = $2
+	`, projectID, userID).Scan(&orgRole)
+
+	_ = s.db.QueryRow(`SELECT role FROM project_members WHERE project_id=$1 AND user_id=$2`, projectID, userID).Scan(&projRole)
+
+	if rankRole(orgRole) >= rankRole(projRole) {
+		return orgRole, nil
+	}
+	return projRole, nil
 }
 
 func (s *Store) ListMembers(projectID int64) ([]Member, error) {

@@ -19,7 +19,10 @@ import "fmt"
 const (
 	CodeInternal = "internal"
 	CodeBadJSON  = "bad_json"
-	CodeNotFound = "not_found"
+	CodeForbidden = "forbidden"
+	CodeNotFound  = "not_found"
+
+	CodeOrgNotFound = "org.not_found"
 
 	CodeLoginRequired      = "auth.login_required"
 	CodeInvalidToken       = "auth.invalid_token"

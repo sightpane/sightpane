@@ -28,6 +28,7 @@ type Project struct {
 	QuotaItemsPerMinute int    `json:"quota_items_per_minute"`
 	StoreIP             string `json:"store_ip"`
 	ScrubRulesJSON      string `json:"scrub_rules_json"`
+	OrgID               *int64 `json:"org_id"`
 	Role                string `json:"role,omitempty"`
 	// Summary counters, filled in for the list view so it needs no extra request
 	// per project.
@@ -36,11 +37,11 @@ type Project struct {
 	OpenIssues  int `json:"open_issues"`
 }
 
-const projectCols = `id, name, api_key, platform, created_by, created_at, retention_days, quota_items_per_minute, store_ip, scrub_rules_json`
+const projectCols = `id, name, api_key, platform, created_by, created_at, retention_days, quota_items_per_minute, store_ip, scrub_rules_json, org_id`
 
 func scanProject(sc interface{ Scan(...any) error }) (*Project, error) {
 	p := &Project{}
-	if err := sc.Scan(&p.ID, &p.Name, &p.APIKey, &p.Platform, &p.CreatedBy, tsCol{&p.CreatedAt}, &p.RetentionDays, &p.QuotaItemsPerMinute, &p.StoreIP, &p.ScrubRulesJSON); err != nil {
+	if err := sc.Scan(&p.ID, &p.Name, &p.APIKey, &p.Platform, &p.CreatedBy, tsCol{&p.CreatedAt}, &p.RetentionDays, &p.QuotaItemsPerMinute, &p.StoreIP, &p.ScrubRulesJSON, &p.OrgID); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, ErrNotFound
 		}
@@ -65,6 +66,10 @@ func (s *Store) EnsureProject(name, key string) (*Project, error) {
 // they are added as the owner member, so a project made from the dashboard is
 // never left with nobody who can administer it.
 func (s *Store) CreateProject(name, platform, key string, owner *int64) (*Project, error) {
+	return s.CreateProjectWithOrg(name, platform, key, owner, nil)
+}
+
+func (s *Store) CreateProjectWithOrg(name, platform, key string, owner *int64, orgID *int64) (*Project, error) {
 	name = strings.TrimSpace(name)
 	if name == "" {
 		return nil, ErrProjectNameRequired
@@ -76,18 +81,28 @@ func (s *Store) CreateProject(name, platform, key string, owner *int64) (*Projec
 		platform = "flutter"
 	}
 	now := time.Now().UTC()
-	// RETURNING rather than LastInsertId, which pgx does not implement.
+
+	if orgID == nil && owner != nil {
+		defOrg, err := s.EnsureUserDefaultOrg(*owner, name)
+		if err == nil && defOrg != nil {
+			orgID = &defOrg.ID
+		}
+	}
+
 	var id int64
-	if err := s.db.QueryRow(`INSERT INTO projects(name, api_key, platform, created_by, created_at) VALUES($1,$2,$3,$4,$5) RETURNING id`,
-		name, key, platform, owner, now).Scan(&id); err != nil {
+	if err := s.db.QueryRow(`INSERT INTO projects(name, api_key, platform, created_by, created_at, org_id) VALUES($1,$2,$3,$4,$5,$6) RETURNING id`,
+		name, key, platform, owner, now, orgID).Scan(&id); err != nil {
 		return nil, err
 	}
 	if owner != nil {
 		if err := s.AddMember(id, *owner, "owner"); err != nil {
 			return nil, err
 		}
+		if orgID != nil {
+			_ = s.CreateAuditLog(*orgID, &id, owner, "project.create", fmt.Sprintf("project:%d (%s)", id, name), "")
+		}
 	}
-	return &Project{ID: id, Name: name, APIKey: key, Platform: platform, CreatedBy: owner, CreatedAt: now.Format(time.RFC3339Nano), RetentionDays: 30, QuotaItemsPerMinute: 0, StoreIP: "full", ScrubRulesJSON: "[]"}, nil
+	return &Project{ID: id, Name: name, APIKey: key, Platform: platform, CreatedBy: owner, CreatedAt: now.Format(time.RFC3339Nano), RetentionDays: 30, QuotaItemsPerMinute: 0, StoreIP: "full", ScrubRulesJSON: "[]", OrgID: orgID}, nil
 }
 
 func (s *Store) ProjectByKey(key string) (*Project, error) {
@@ -120,6 +135,23 @@ func (s *Store) ListAllProjects() ([]Project, error) {
 	return out, rows.Err()
 }
 
+func (s *Store) ListProjectsByOrg(orgID int64) ([]Project, error) {
+	rows, err := s.db.Query(`SELECT `+projectCols+` FROM projects WHERE org_id=$1 ORDER BY name`, orgID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []Project
+	for rows.Next() {
+		p, err := scanProject(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, *p)
+	}
+	return out, rows.Err()
+}
+
 func (s *Store) fillProjectCounters(p *Project) {
 	// A rolling 24 hours, not the last calendar day, so this counts raw items:
 	// the daily aggregate cannot answer a window that starts inside a bucket.
@@ -133,7 +165,24 @@ func (s *Store) fillProjectCounters(p *Project) {
 // with the role they hold there, which is what the dashboard uses to decide
 // which owner-only actions to show.
 func (s *Store) ListProjectsForUser(userID int64) ([]Project, error) {
-	rows, err := s.db.Query(`SELECT p.id, p.name, p.api_key, p.platform, p.created_by, p.created_at, p.retention_days, p.quota_items_per_minute, p.store_ip, p.scrub_rules_json, m.role FROM projects p JOIN project_members m ON m.project_id=p.id WHERE m.user_id=$1 ORDER BY p.name`, userID)
+	rows, err := s.db.Query(`
+		SELECT DISTINCT ON (p.id)
+			p.id, p.name, p.api_key, p.platform, p.created_by, p.created_at,
+			p.retention_days, p.quota_items_per_minute, p.store_ip, p.scrub_rules_json, p.org_id,
+			COALESCE(om.role, pm.role, 'member') as role
+		FROM projects p
+		LEFT JOIN project_members pm ON pm.project_id=p.id AND pm.user_id=$1
+		LEFT JOIN org_members om ON om.org_id=p.org_id AND om.user_id=$1
+		WHERE pm.user_id=$1 OR om.user_id=$1
+		ORDER BY p.id,
+			CASE COALESCE(om.role, pm.role)
+				WHEN 'owner' THEN 1
+				WHEN 'admin' THEN 2
+				WHEN 'member' THEN 3
+				WHEN 'viewer' THEN 4
+				ELSE 5
+			END
+	`, userID)
 	if err != nil {
 		return nil, err
 	}
@@ -141,7 +190,7 @@ func (s *Store) ListProjectsForUser(userID int64) ([]Project, error) {
 	out := []Project{}
 	for rows.Next() {
 		var p Project
-		if err := rows.Scan(&p.ID, &p.Name, &p.APIKey, &p.Platform, &p.CreatedBy, tsCol{&p.CreatedAt}, &p.RetentionDays, &p.QuotaItemsPerMinute, &p.StoreIP, &p.ScrubRulesJSON, &p.Role); err != nil {
+		if err := rows.Scan(&p.ID, &p.Name, &p.APIKey, &p.Platform, &p.CreatedBy, tsCol{&p.CreatedAt}, &p.RetentionDays, &p.QuotaItemsPerMinute, &p.StoreIP, &p.ScrubRulesJSON, &p.OrgID, &p.Role); err != nil {
 			return nil, err
 		}
 		out = append(out, p)

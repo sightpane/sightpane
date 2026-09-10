@@ -10,6 +10,8 @@ import (
 	"errors"
 	"log"
 	"strconv"
+	"strings"
+	"time"
 
 	"github.com/gofiber/fiber/v3"
 
@@ -36,16 +38,58 @@ func projectKey(c fiber.Ctx) string {
 // newer than the backend still gets the rest of its data stored.
 func (s *Server) ingest(c fiber.Ctx) error {
 	key := projectKey(c)
-	if key == "" {
-		return apierr.New(fiber.StatusUnauthorized, apierr.CodeKeyRequired,
-			"x-sightpane-key header required")
-	}
-	p, err := s.store.ProjectByKey(key)
-	if errors.Is(err, store.ErrNotFound) {
-		return apierr.New(fiber.StatusUnauthorized, apierr.CodeUnknownKey, "unknown api key")
-	}
-	if err != nil {
-		return err
+	var p *store.Project
+	var err error
+	if key != "" {
+		p, err = s.store.ProjectByKey(key)
+		if errors.Is(err, store.ErrNotFound) {
+			return apierr.New(fiber.StatusUnauthorized, apierr.CodeUnknownKey, "unknown api key")
+		}
+		if err != nil {
+			return err
+		}
+	} else {
+		tok := bearer(c)
+		if tok != "" && (strings.HasPrefix(tok, "sp_") || strings.HasPrefix(tok, "hog_")) {
+			apiTok, tErr := s.store.APITokenBySecret(tok)
+			if tErr != nil || (apiTok.ExpiresAt != nil && time.Now().After(*apiTok.ExpiresAt)) {
+				return apierr.New(fiber.StatusUnauthorized, apierr.CodeInvalidToken, "invalid or expired API token")
+			}
+			if !hasScope(apiTok.Scopes, "ingest") && !hasScope(apiTok.Scopes, "admin") && !hasScope(apiTok.Scopes, "*") {
+				return apierr.New(fiber.StatusForbidden, apierr.CodeForbidden, "api token missing ingest scope")
+			}
+			if apiTok.ProjectID != nil {
+				p, err = s.store.ProjectByID(*apiTok.ProjectID)
+			} else {
+				pid := pathID(c, "id")
+				if pid == 0 {
+					pid = int64(queryInt(c, "project_id"))
+				}
+				if pid != 0 {
+					p, err = s.store.ProjectByID(pid)
+					if err == nil && (p.OrgID == nil || *p.OrgID != apiTok.OrgID) {
+						p = nil
+						err = store.ErrNotFound
+					}
+				} else {
+					projs, pErr := s.store.ListProjectsByOrg(apiTok.OrgID)
+					if pErr == nil && len(projs) > 0 {
+						p = &projs[0]
+					} else {
+						return apierr.New(fiber.StatusBadRequest, apierr.CodeProjectNotFound, "project not found for token")
+					}
+				}
+			}
+			if p == nil || errors.Is(err, store.ErrNotFound) {
+				return apierr.New(fiber.StatusNotFound, apierr.CodeProjectNotFound, "project not found")
+			}
+			if err != nil {
+				return err
+			}
+		} else {
+			return apierr.New(fiber.StatusUnauthorized, apierr.CodeKeyRequired,
+				"x-sightpane-key header required")
+		}
 	}
 	// The app's body limit is sized for source-map uploads; an envelope has its
 	// own, smaller cap, so this is where it is enforced.
