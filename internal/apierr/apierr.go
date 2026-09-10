@@ -39,6 +39,7 @@ const (
 	CodeSessionNotFound = "session.not_found"
 	CodeFrameNotFound   = "frame.not_found"
 	CodeIssueNotFound   = "issue.not_found"
+	CodeUserIDRequired  = "user.id_required"
 
 	CodeReleaseRequired  = "release.required"
 	CodeArtifactName     = "release.artifact_name"

@@ -6,6 +6,7 @@
 package server
 
 import (
+	"fmt"
 	"strings"
 
 	"github.com/gofiber/fiber/v3"
@@ -46,10 +47,12 @@ func (s *Server) getProject(c fiber.Ctx) error {
 
 func (s *Server) updateProject(c fiber.Ctx) error {
 	var in struct {
-		Name                string `json:"name"`
-		Platform            string `json:"platform"`
-		RetentionDays       *int   `json:"retention_days"`
-		QuotaItemsPerMinute *int   `json:"quota_items_per_minute"`
+		Name                string  `json:"name"`
+		Platform            string  `json:"platform"`
+		RetentionDays       *int    `json:"retention_days"`
+		QuotaItemsPerMinute *int    `json:"quota_items_per_minute"`
+		StoreIP             *string `json:"store_ip"`
+		ScrubRulesJSON      *string `json:"scrub_rules_json"`
 	}
 	if err := c.Bind().JSON(&in); err != nil || strings.TrimSpace(in.Name) == "" {
 		return apierr.New(fiber.StatusBadRequest, apierr.CodeProjectNameNeeded, "name required")
@@ -70,10 +73,45 @@ func (s *Server) updateProject(c fiber.Ctx) error {
 	if in.QuotaItemsPerMinute != nil && *in.QuotaItemsPerMinute >= 0 {
 		quota = *in.QuotaItemsPerMinute
 	}
-	if err := s.store.UpdateProject(pid, in.Name, in.Platform, retentionDays, quota); err != nil {
+	storeIP := p.StoreIP
+	if in.StoreIP != nil && (*in.StoreIP == "full" || *in.StoreIP == "anonymized" || *in.StoreIP == "none") {
+		storeIP = *in.StoreIP
+	}
+	scrubRulesJSON := p.ScrubRulesJSON
+	if in.ScrubRulesJSON != nil {
+		scrubRulesJSON = *in.ScrubRulesJSON
+	}
+	if err := s.store.UpdateProject(pid, in.Name, in.Platform, retentionDays, quota, storeIP, scrubRulesJSON); err != nil {
 		return err
 	}
 	return s.getProject(c)
+}
+
+func (s *Server) deleteUserData(c fiber.Ctx) error {
+	pid := pathID(c, "id")
+	userID := c.Params("userId")
+	if userID == "" {
+		return apierr.New(fiber.StatusBadRequest, apierr.CodeUserIDRequired, "user id required")
+	}
+	if err := s.store.DeleteUserData(c.Context(), pid, userID); err != nil {
+		return err
+	}
+	return c.JSON(fiber.Map{"deleted": true, "user_id": userID})
+}
+
+func (s *Server) exportUserData(c fiber.Ctx) error {
+	pid := pathID(c, "id")
+	userID := c.Params("userId")
+	if userID == "" {
+		return apierr.New(fiber.StatusBadRequest, apierr.CodeUserIDRequired, "user id required")
+	}
+	zipBytes, err := s.store.ExportUserData(c.Context(), pid, userID)
+	if err != nil {
+		return err
+	}
+	c.Set("Content-Type", "application/zip")
+	c.Set("Content-Disposition", fmt.Sprintf(`attachment; filename="user-%s-export.zip"`, userID))
+	return c.Send(zipBytes)
 }
 
 func (s *Server) deleteProject(c fiber.Ctx) error {

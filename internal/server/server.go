@@ -124,6 +124,8 @@ func New(st *store.Store, notifier *alert.Notifier, uiDir string, embedded fs.FS
 	api.Get("/projects/:id/sessions", s.requireProject(roleMember), s.listSessions)
 	api.Get("/projects/:id/issues", s.requireProject(roleMember), s.listIssues)
 	api.Get("/projects/:id/events/summary", s.requireProject(roleMember), s.eventSummary)
+	api.Delete("/projects/:id/users/:userId", s.requireProject(roleOwner), s.deleteUserData)
+	api.Get("/projects/:id/users/:userId/export", s.requireProject(roleMember), s.exportUserData)
 
 	// Alerts and notification channels (owner only).
 	api.Get("/projects/:id/alert-channels", s.requireProject(roleOwner), s.listAlertChannels)

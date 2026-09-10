@@ -173,6 +173,34 @@ func (s *Store) Ingest(ctx context.Context, projectID int64, env *Envelope, ip s
 	}
 	_ = json.Unmarshal([]byte(deviceJSON), &d)
 	propsJSON := rawOr(env.Session.Props, "{}")
+
+	// Privacy & PII settings
+	var storeIP, scrubRulesJSON string
+	_ = s.db.QueryRowContext(ctx, `SELECT store_ip, scrub_rules_json FROM projects WHERE id=$1`, projectID).Scan(&storeIP, &scrubRulesJSON)
+	if storeIP == "" {
+		storeIP = "full"
+	}
+	switch storeIP {
+	case "none":
+		ip = ""
+	case "anonymized":
+		ip = AnonymizeIP(ip)
+	}
+
+	var scrubRules []ScrubRule
+	if scrubRulesJSON != "" && scrubRulesJSON != "[]" {
+		_ = json.Unmarshal([]byte(scrubRulesJSON), &scrubRules)
+	}
+	if len(scrubRules) > 0 && propsJSON != "{}" {
+		var propsMap map[string]any
+		if err := json.Unmarshal([]byte(propsJSON), &propsMap); err == nil {
+			ApplyScrubRulesToMap(scrubRules, propsMap)
+			if b, err := json.Marshal(propsMap); err == nil {
+				propsJSON = string(b)
+			}
+		}
+	}
+
 	browser := BrowserLabel(d.Browser, d.UA, d.Platform, d.OS)
 	// The visitor key deliberately mixes in the browser and the IP: the same user
 	// id seen from another browser or another address counts as another visitor.
@@ -188,10 +216,10 @@ func (s *Store) Ingest(ctx context.Context, projectID int64, env *Envelope, ip s
 		VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
 		ON CONFLICT(id) DO UPDATE SET last_seen_at=excluded.last_seen_at, user_id=excluded.user_id, user_json=excluded.user_json,
 		  device_json=excluded.device_json, props_json=excluded.props_json, platform=excluded.platform, release=excluded.release,
-		  ip=CASE WHEN excluded.ip='' THEN sessions.ip ELSE excluded.ip END,
+		  ip=CASE WHEN $15='none' THEN '' WHEN excluded.ip='' THEN sessions.ip ELSE excluded.ip END,
 		  browser=excluded.browser, visitor_key=excluded.visitor_key,
 		  current_route=CASE WHEN excluded.current_route='' THEN sessions.current_route ELSE excluded.current_route END`,
-		env.Session.ID, projectID, started, now, userID, userJSON, deviceJSON, propsJSON, d.Platform, d.Release, ip, browser, visitor, route)
+		env.Session.ID, projectID, started, now, userID, userJSON, deviceJSON, propsJSON, d.Platform, d.Release, ip, browser, visitor, route, storeIP)
 	if err != nil {
 		return nil, err
 	}
@@ -213,6 +241,18 @@ func (s *Store) Ingest(ctx context.Context, projectID int64, env *Envelope, ip s
 		if h == nil {
 			res.Rejected++
 			continue
+		}
+		if len(scrubRules) > 0 {
+			var m map[string]any
+			if err := json.Unmarshal(raw, &m); err == nil {
+				ApplyScrubRulesToMap(scrubRules, m)
+				if b, err := json.Marshal(m); err == nil {
+					raw = b
+				}
+			}
+			h.Message = ApplyScrubRules(scrubRules, h.Message, "message")
+			h.Exception = ApplyScrubRules(scrubRules, h.Exception, "exception")
+			h.Stack = ApplyScrubRules(scrubRules, h.Stack, "stack")
 		}
 		ts := parseTS(h.TS, now)
 		switch h.Type {

@@ -57,6 +57,10 @@ type Store struct {
 	droppedQuota map[int64]int
 }
 
+func (s *Store) Blobs() blob.Store {
+	return s.blobs
+}
+
 // RecordDroppedQuota tracks rejected items due to project ingest quota exceeded.
 func (s *Store) RecordDroppedQuota(projectID int64, count int) {
 	s.quotaMu.Lock()

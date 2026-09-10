@@ -136,7 +136,7 @@ func TestIngestRateLimitingAndQuota(t *testing.T) {
 	}
 
 	// Update quota to 2 items per minute
-	if err := st.UpdateProject(p.ID, p.Name, p.Platform, 30, 2); err != nil {
+	if err := st.UpdateProject(p.ID, p.Name, p.Platform, 30, 2, "full", "[]"); err != nil {
 		t.Fatal(err)
 	}
 
