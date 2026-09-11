@@ -1,0 +1,1 @@
+-- timescale companion for 0023_dashboards_insights.sql

@@ -187,6 +187,22 @@ func New(st *store.Store, notifier *alert.Notifier, uiDir string, embedded fs.FS
 	api.Get("/projects/:id/profiles/:profileId", s.requireProject(roleViewer), s.getProfile)
 	api.Post("/projects/:id/profiles", s.createProfile)
 
+	// Custom Dashboards & Multi-Metric Insights.
+	api.Get("/projects/:id/dashboards", s.requireProject(roleViewer), s.listDashboards)
+	api.Post("/projects/:id/dashboards", s.requireProject(roleMember), s.createDashboard)
+	api.Get("/projects/:id/dashboards/:dashboardId", s.requireProject(roleViewer), s.getDashboard)
+	api.Put("/projects/:id/dashboards/:dashboardId", s.requireProject(roleMember), s.updateDashboard)
+	api.Delete("/projects/:id/dashboards/:dashboardId", s.requireProject(roleMember), s.deleteDashboard)
+	api.Post("/projects/:id/dashboards/:dashboardId/default", s.requireProject(roleMember), s.setDefaultDashboard)
+
+	api.Get("/projects/:id/insights", s.requireProject(roleViewer), s.listInsights)
+	api.Post("/projects/:id/insights", s.requireProject(roleMember), s.createInsight)
+	api.Get("/projects/:id/insights/:insightId", s.requireProject(roleViewer), s.getInsight)
+	api.Put("/projects/:id/insights/:insightId", s.requireProject(roleMember), s.updateInsight)
+	api.Delete("/projects/:id/insights/:insightId", s.requireProject(roleMember), s.deleteInsight)
+	api.Post("/projects/:id/insights/query", s.requireProject(roleViewer), s.queryInsight)
+	api.Get("/projects/:id/insights/:insightId/results", s.requireProject(roleViewer), s.getInsightResults)
+
 
 
 	// Session and issue details are addressed globally, so each one resolves its
