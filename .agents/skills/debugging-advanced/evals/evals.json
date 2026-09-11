@@ -1,0 +1,29 @@
+{
+  "skill_name": "debugging-advanced",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "The dashboard shows 0 sessions for the 'Casino CRM' project even though I've been clicking around frontend2 for ten minutes with HOG_API_KEY set in config.json. Figure out why nothing arrives and fix it.",
+      "expected_output": "Agent checks the backend log for ingest lines, verifies the SDK actually initialized (console 'sightpane: başlatıldı' line, dart-defines require a full restart not hot restart), sends a real envelope with package/tool/smoke_send.dart or curl to prove the backend path, identifies the root cause (SDK not initialized / wrong key / wrong endpoint) and explains it before changing anything.",
+      "files": []
+    },
+    {
+      "id": 2,
+      "prompt": "Every session in the sessions list has IP 172.27.0.1. The backend runs in docker compose behind Caddy. Why, and what do I change?",
+      "expected_output": "Agent traces clientIP in backend/api.go (Cloudflare → Forwarded → X-Forwarded-For → X-Real-IP → RemoteAddr), explains that the Docker bridge address is what the backend sees when no forwarded header or PROXY protocol reaches it, distinguishes HTTP reverse_proxy (headers) from layer-4 (needs proxy_protocol v2 + SIGHTPANE_PROXY_PROTOCOL=1 + SIGHTPANE_TRUSTED_PROXIES), and gives the concrete Caddy and env changes; does not patch the code to hard-code an address.",
+      "files": []
+    },
+    {
+      "id": 3,
+      "prompt": "After pulling the latest backend the server logs 'no such column: visitor_key' on the first request. The tests pass. What is wrong?",
+      "expected_output": "Agent identifies that the column exists in CREATE TABLE for fresh databases (which is what tests use) but was not added to the ALTER TABLE list in store.go migrate(), so existing sightpane.db files lack it; adds the ALTER, writes a test that opens a database created with the old schema, and explains why the green suite did not catch it.",
+      "files": []
+    },
+    {
+      "id": 4,
+      "prompt": "The replay player in the dashboard shows the frames but ESC no longer closes fullscreen after the last refactor. Debug it.",
+      "expected_output": "Agent reproduces in a widget test with pumpApp (one ProviderContainer), checks the HardwareKeyboard handler registration/removal in FullscreenReplayPage and the route's reverseTransitionDuration, finds the actual cause by execution rather than guessing, adds a regression test that fails on the old code, then fixes.",
+      "files": []
+    }
+  ]
+}
