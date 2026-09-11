@@ -10,8 +10,8 @@ Whenever an issue, bug fix, feature, audit finding, refactoring, or user-request
 1. **Run `/code-auditor`**:
    - Before committing, invoke the `/code-auditor` skill on all modified, new, and affected files.
    - Review for:
-     - 🔴 **Severity 1 (Critical / High Risk)**: Data loss, concurrency races, goroutine/signal leaks, panics, unconstrained hypertable scans, envelope contract breaks.
-     - 🟠 **Severity 2 (Medium / Structural)**: Architectural inconsistency, N+1 queries, lifecycle leaks, form parsing pitfalls, improper error handling.
+     - 🔴 **Severity 1 (Critical / High Risk)**: Data loss, missing rows.Err() / swallowed Scan errors in SQL queries, concurrency races, goroutine/signal leaks, panics, unconstrained hypertable scans, envelope contract breaks.
+     - 🟠 **Severity 2 (Medium / Structural)**: Architectural inconsistency, N+1 queries, lifecycle leaks (e.g. deferred rows.Close() in loops), form parsing pitfalls, improper error handling.
      - 🟡 **Severity 3 (Low / Code Smells)**: Redundant code, test gaps, fragile assumptions.
 2. **Resolve All Findings First**:
    - Fix all identified issues (especially Severity 1 and Severity 2) immediately.
