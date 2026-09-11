@@ -327,35 +327,40 @@ func (s *Store) EvaluateCronDeadlines() ([]*CronMonitor, error) {
 		  AND next_expected_at IS NOT NULL
 		  AND $1 > next_expected_at + (grace_period_minutes * INTERVAL '1 minute')
 	`, now)
-	if err == nil {
-		defer missedRows.Close()
-		for missedRows.Next() {
-			var m CronMonitor
-			if err := missedRows.Scan(
-				&m.ID, &m.ProjectID, &m.Slug, &m.Name, &m.Schedule, &m.Timezone,
-				&m.GracePeriodMinutes, &m.MaxRuntimeMinutes, &m.Status,
-				&m.LastCheckinAt, &m.NextExpectedAt, &m.CreatedAt, &m.UpdatedAt,
-			); err == nil {
-				m.Status = "missed"
-				if next, err := ComputeNextExpected(m.Schedule, m.Timezone, now); err == nil {
-					m.NextExpectedAt = &next
-				}
-				// Mark monitor as missed
-				s.db.ExecContext(ctx, `
-					UPDATE cron_monitors
-					SET status = 'missed', next_expected_at = $1, updated_at = $2
-					WHERE id = $3
-				`, m.NextExpectedAt, now, m.ID)
-
-				// Record checkin indicating missed run
-				s.db.ExecContext(ctx, `
-					INSERT INTO cron_checkins (monitor_id, project_id, status, message, created_at)
-					VALUES ($1, $2, 'error', 'Missed check-in deadline', $3)
-				`, m.ID, m.ProjectID, now)
-
-				alerted = append(alerted, &m)
-			}
+	if err != nil {
+		return nil, fmt.Errorf("query missed crons: %w", err)
+	}
+	defer missedRows.Close()
+	for missedRows.Next() {
+		var m CronMonitor
+		if err := missedRows.Scan(
+			&m.ID, &m.ProjectID, &m.Slug, &m.Name, &m.Schedule, &m.Timezone,
+			&m.GracePeriodMinutes, &m.MaxRuntimeMinutes, &m.Status,
+			&m.LastCheckinAt, &m.NextExpectedAt, &m.CreatedAt, &m.UpdatedAt,
+		); err != nil {
+			return nil, fmt.Errorf("scan missed cron: %w", err)
 		}
+		m.Status = "missed"
+		if next, err := ComputeNextExpected(m.Schedule, m.Timezone, now); err == nil {
+			m.NextExpectedAt = &next
+		}
+		// Mark monitor as missed
+		s.db.ExecContext(ctx, `
+			UPDATE cron_monitors
+			SET status = 'missed', next_expected_at = $1, updated_at = $2
+			WHERE id = $3
+		`, m.NextExpectedAt, now, m.ID)
+
+		// Record checkin indicating missed run
+		s.db.ExecContext(ctx, `
+			INSERT INTO cron_checkins (monitor_id, project_id, status, message, created_at)
+			VALUES ($1, $2, 'error', 'Missed check-in deadline', $3)
+		`, m.ID, m.ProjectID, now)
+
+		alerted = append(alerted, &m)
+	}
+	if err := missedRows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate missed crons: %w", err)
 	}
 
 	// 2. Detect timeouts: where status == 'in_progress' and now > last_checkin_at + max_runtime_minutes
@@ -367,35 +372,40 @@ func (s *Store) EvaluateCronDeadlines() ([]*CronMonitor, error) {
 		  AND last_checkin_at IS NOT NULL
 		  AND $1 > last_checkin_at + (max_runtime_minutes * INTERVAL '1 minute')
 	`, now)
-	if err == nil {
-		defer timeoutRows.Close()
-		for timeoutRows.Next() {
-			var m CronMonitor
-			if err := timeoutRows.Scan(
-				&m.ID, &m.ProjectID, &m.Slug, &m.Name, &m.Schedule, &m.Timezone,
-				&m.GracePeriodMinutes, &m.MaxRuntimeMinutes, &m.Status,
-				&m.LastCheckinAt, &m.NextExpectedAt, &m.CreatedAt, &m.UpdatedAt,
-			); err == nil {
-				m.Status = "error"
-				if next, err := ComputeNextExpected(m.Schedule, m.Timezone, now); err == nil {
-					m.NextExpectedAt = &next
-				}
-				// Mark monitor as error
-				s.db.ExecContext(ctx, `
-					UPDATE cron_monitors
-					SET status = 'error', next_expected_at = $1, updated_at = $2
-					WHERE id = $3
-				`, m.NextExpectedAt, now, m.ID)
-
-				// Record checkin indicating timeout
-				s.db.ExecContext(ctx, `
-					INSERT INTO cron_checkins (monitor_id, project_id, status, message, created_at)
-					VALUES ($1, $2, 'error', 'Job execution timed out', $3)
-				`, m.ID, m.ProjectID, now)
-
-				alerted = append(alerted, &m)
-			}
+	if err != nil {
+		return nil, fmt.Errorf("query timeout crons: %w", err)
+	}
+	defer timeoutRows.Close()
+	for timeoutRows.Next() {
+		var m CronMonitor
+		if err := timeoutRows.Scan(
+			&m.ID, &m.ProjectID, &m.Slug, &m.Name, &m.Schedule, &m.Timezone,
+			&m.GracePeriodMinutes, &m.MaxRuntimeMinutes, &m.Status,
+			&m.LastCheckinAt, &m.NextExpectedAt, &m.CreatedAt, &m.UpdatedAt,
+		); err != nil {
+			return nil, fmt.Errorf("scan timeout cron: %w", err)
 		}
+		m.Status = "error"
+		if next, err := ComputeNextExpected(m.Schedule, m.Timezone, now); err == nil {
+			m.NextExpectedAt = &next
+		}
+		// Mark monitor as error
+		s.db.ExecContext(ctx, `
+			UPDATE cron_monitors
+			SET status = 'error', next_expected_at = $1, updated_at = $2
+			WHERE id = $3
+		`, m.NextExpectedAt, now, m.ID)
+
+		// Record checkin indicating timeout
+		s.db.ExecContext(ctx, `
+			INSERT INTO cron_checkins (monitor_id, project_id, status, message, created_at)
+			VALUES ($1, $2, 'error', 'Job execution timed out', $3)
+		`, m.ID, m.ProjectID, now)
+
+		alerted = append(alerted, &m)
+	}
+	if err := timeoutRows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate timeout crons: %w", err)
 	}
 
 	return alerted, nil
@@ -418,19 +428,23 @@ func (s *Store) GetCronStats(projectID int64) (*CronStats, error) {
 	for rows.Next() {
 		var status string
 		var count int
-		if err := rows.Scan(&status, &count); err == nil {
-			stats.TotalMonitors += count
-			switch status {
-			case "ok":
-				stats.OkCount = count
-			case "in_progress":
-				stats.InProgressCount = count
-			case "error":
-				stats.ErrorCount = count
-			case "missed":
-				stats.MissedCount = count
-			}
+		if err := rows.Scan(&status, &count); err != nil {
+			return nil, fmt.Errorf("scan cron status count: %w", err)
 		}
+		stats.TotalMonitors += count
+		switch status {
+		case "ok":
+			stats.OkCount = count
+		case "in_progress":
+			stats.InProgressCount = count
+		case "error":
+			stats.ErrorCount = count
+		case "missed":
+			stats.MissedCount = count
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate cron stats: %w", err)
 	}
 	return &stats, nil
 }

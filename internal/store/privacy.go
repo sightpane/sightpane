@@ -107,14 +107,18 @@ func (s *Store) DeleteUserData(ctx context.Context, projectID int64, userID stri
 	if err != nil {
 		return err
 	}
+	defer rows.Close()
 	var sessions []string
 	for rows.Next() {
 		var sid string
-		if err := rows.Scan(&sid); err == nil {
-			sessions = append(sessions, sid)
+		if err := rows.Scan(&sid); err != nil {
+			return fmt.Errorf("scan user session: %w", err)
 		}
+		sessions = append(sessions, sid)
 	}
-	rows.Close()
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("iterate user sessions: %w", err)
+	}
 
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -194,56 +198,81 @@ func (s *Store) ExportUserData(ctx context.Context, projectID int64, userID stri
 			"current_route": route,
 		})
 	}
+	if err := sRows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate sessions: %w", err)
+	}
 
 	// Query items
 	var items []map[string]any
 	for _, sid := range sessionIDs {
-		iRows, err := s.db.QueryContext(ctx, `SELECT id, ts, type, name, body_json FROM items WHERE project_id=$1 AND session_id=$2 ORDER BY ts`, projectID, sid)
-		if err == nil {
+		err := func() error {
+			iRows, err := s.db.QueryContext(ctx, `SELECT id, ts, type, name, body_json FROM items WHERE project_id=$1 AND session_id=$2 ORDER BY ts`, projectID, sid)
+			if err != nil {
+				return err
+			}
+			defer iRows.Close()
 			for iRows.Next() {
 				var id int64
 				var ts time.Time
 				var typ, name, bodyJSON string
-				if err := iRows.Scan(&id, &ts, &typ, &name, &bodyJSON); err == nil {
-					items = append(items, map[string]any{
-						"id":         id,
-						"session_id": sid,
-						"ts":         ts.Format(time.RFC3339Nano),
-						"type":       typ,
-						"name":       name,
-						"body_json":  bodyJSON,
-					})
+				if err := iRows.Scan(&id, &ts, &typ, &name, &bodyJSON); err != nil {
+					return fmt.Errorf("scan item: %w", err)
 				}
+				items = append(items, map[string]any{
+					"id":         id,
+					"session_id": sid,
+					"ts":         ts.Format(time.RFC3339Nano),
+					"type":       typ,
+					"name":       name,
+					"body_json":  bodyJSON,
+				})
 			}
-			iRows.Close()
+			if err := iRows.Err(); err != nil {
+				return fmt.Errorf("iterate items: %w", err)
+			}
+			return nil
+		}()
+		if err != nil {
+			return nil, err
 		}
 	}
 
 	// Query spans
 	var spans []map[string]any
 	for _, sid := range sessionIDs {
-		spRows, err := s.db.QueryContext(ctx, `SELECT trace_id, span_id, parent_span_id, name, op, status, duration_ms, tags_json, ts FROM spans WHERE project_id=$1 AND session_id=$2 ORDER BY ts`, projectID, sid)
-		if err == nil {
+		err := func() error {
+			spRows, err := s.db.QueryContext(ctx, `SELECT trace_id, span_id, parent_span_id, name, op, status, duration_ms, tags_json, ts FROM spans WHERE project_id=$1 AND session_id=$2 ORDER BY ts`, projectID, sid)
+			if err != nil {
+				return err
+			}
+			defer spRows.Close()
 			for spRows.Next() {
 				var traceID, spanID, parentSpanID, name, op, status, tagsJSON string
 				var durationMs float64
 				var ts time.Time
-				if err := spRows.Scan(&traceID, &spanID, &parentSpanID, &name, &op, &status, &durationMs, &tagsJSON, &ts); err == nil {
-					spans = append(spans, map[string]any{
-						"session_id":     sid,
-						"trace_id":       traceID,
-						"span_id":        spanID,
-						"parent_span_id": parentSpanID,
-						"name":           name,
-						"op":             op,
-						"status":         status,
-						"duration_ms":    durationMs,
-						"tags_json":      tagsJSON,
-						"ts":             ts.Format(time.RFC3339Nano),
-					})
+				if err := spRows.Scan(&traceID, &spanID, &parentSpanID, &name, &op, &status, &durationMs, &tagsJSON, &ts); err != nil {
+					return fmt.Errorf("scan span: %w", err)
 				}
+				spans = append(spans, map[string]any{
+					"session_id":     sid,
+					"trace_id":       traceID,
+					"span_id":        spanID,
+					"parent_span_id": parentSpanID,
+					"name":           name,
+					"op":             op,
+					"status":         status,
+					"duration_ms":    durationMs,
+					"tags_json":      tagsJSON,
+					"ts":             ts.Format(time.RFC3339Nano),
+				})
 			}
-			spRows.Close()
+			if err := spRows.Err(); err != nil {
+				return fmt.Errorf("iterate spans: %w", err)
+			}
+			return nil
+		}()
+		if err != nil {
+			return nil, err
 		}
 	}
 
@@ -274,18 +303,22 @@ func (s *Store) ExportUserData(ctx context.Context, projectID int64, userID stri
 
 	// Write frame PNGs
 	for _, sid := range sessionIDs {
-		fRows, err := s.db.QueryContext(ctx, `SELECT seq FROM frames WHERE session_id=$1 ORDER BY seq`, sid)
-		if err != nil {
-			continue
-		}
 		var seqs []int
-		for fRows.Next() {
-			var seq int
-			if err := fRows.Scan(&seq); err == nil {
+		_ = func() error {
+			fRows, err := s.db.QueryContext(ctx, `SELECT seq FROM frames WHERE session_id=$1 ORDER BY seq`, sid)
+			if err != nil {
+				return err
+			}
+			defer fRows.Close()
+			for fRows.Next() {
+				var seq int
+				if err := fRows.Scan(&seq); err != nil {
+					return err
+				}
 				seqs = append(seqs, seq)
 			}
-		}
-		fRows.Close()
+			return fRows.Err()
+		}()
 
 		for _, seq := range seqs {
 			rc, _, err := s.blobs.Get(ctx, blob.FrameKey(sid, seq))

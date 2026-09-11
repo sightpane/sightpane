@@ -261,6 +261,9 @@ func (s *Store) ListTraces(ctx context.Context, projectID int64, opts ListTraces
 
 		traces = append(traces, t)
 	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate traces: %w", err)
+	}
 
 	// For each trace, enrich with root span information (root name & root op)
 	for i := range traces {
@@ -347,6 +350,9 @@ func (s *Store) GetTrace(ctx context.Context, projectID int64, traceID string) (
 		if r.serviceName != "" {
 			serviceSet[r.serviceName] = true
 		}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate trace spans: %w", err)
 	}
 
 	if len(rawSpans) == 0 {

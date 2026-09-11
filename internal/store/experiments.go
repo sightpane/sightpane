@@ -338,9 +338,15 @@ func (s *Store) CalculateExperimentResults(ctx context.Context, projectID, id in
 	var allUsers []string
 	for rows.Next() {
 		var uid string
-		if err := rows.Scan(&uid); err == nil && uid != "" {
+		if err := rows.Scan(&uid); err != nil {
+			return nil, fmt.Errorf("scan experiment session user: %w", err)
+		}
+		if uid != "" {
 			allUsers = append(allUsers, uid)
 		}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate experiment session users: %w", err)
 	}
 
 	// 2. Find converted users in the window
@@ -358,9 +364,15 @@ func (s *Store) CalculateExperimentResults(ctx context.Context, projectID, id in
 	convertedSet := make(map[string]bool)
 	for cRows.Next() {
 		var uid string
-		if err := cRows.Scan(&uid); err == nil && uid != "" {
+		if err := cRows.Scan(&uid); err != nil {
+			return nil, fmt.Errorf("scan experiment conversion user: %w", err)
+		}
+		if uid != "" {
 			convertedSet[uid] = true
 		}
+	}
+	if err := cRows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate experiment conversion users: %w", err)
 	}
 
 	// 3. Bucket participants and conversions into variants

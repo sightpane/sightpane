@@ -439,6 +439,9 @@ func (s *Store) GetUptimeHistory(projectID, monitorID int64, days int) (*UptimeH
 			UptimePct: pct,
 		}
 	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate daily history: %w", err)
+	}
 
 	// Fill contiguous days for the requested window
 	var history90d []*UptimeDaySummary
@@ -485,6 +488,9 @@ func (s *Store) GetUptimeHistory(projectID, monitorID int64, days int) (*UptimeH
 			currentMs = c.ResponseTimeMs
 		}
 		recentChecks = append(recentChecks, &c)
+	}
+	if err := checkRows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate recent checks: %w", err)
 	}
 
 	// 3. SSL Info

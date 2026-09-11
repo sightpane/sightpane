@@ -8,6 +8,7 @@ package store
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"math"
 	"strings"
 	"time"
@@ -105,23 +106,28 @@ func (s *Store) ListProjectUsers(ctx context.Context, projectID int64, days int,
 		GROUP BY 1
 		ORDER BY 1
 	`, projectID, since)
-	if err == nil {
-		defer dailyRows.Close()
-		for dailyRows.Next() {
-			var day string
-			var activeUsers, errorUsers int
-			var avgDur float64
-			if err := dailyRows.Scan(&day, &activeUsers, &errorUsers, &avgDur); err == nil {
-				for i := range resp.Daily {
-					if resp.Daily[i].Day == day {
-						resp.Daily[i].ActiveUsers = activeUsers
-						resp.Daily[i].ErrorUsers = errorUsers
-						resp.Daily[i].AvgDurationSec = math.Round(avgDur*10) / 10
-						break
-					}
-				}
+	if err != nil {
+		return nil, fmt.Errorf("query daily users: %w", err)
+	}
+	defer dailyRows.Close()
+	for dailyRows.Next() {
+		var day string
+		var activeUsers, errorUsers int
+		var avgDur float64
+		if err := dailyRows.Scan(&day, &activeUsers, &errorUsers, &avgDur); err != nil {
+			return nil, fmt.Errorf("scan daily user stats: %w", err)
+		}
+		for i := range resp.Daily {
+			if resp.Daily[i].Day == day {
+				resp.Daily[i].ActiveUsers = activeUsers
+				resp.Daily[i].ErrorUsers = errorUsers
+				resp.Daily[i].AvgDurationSec = math.Round(avgDur*10) / 10
+				break
 			}
 		}
+	}
+	if err := dailyRows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate daily users: %w", err)
 	}
 
 	// 3. User directory list
@@ -199,6 +205,9 @@ func (s *Store) ListProjectUsers(ctx context.Context, projectID int64, days int,
 		}
 
 		resp.Users = append(resp.Users, u)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate users directory: %w", err)
 	}
 
 	return resp, nil

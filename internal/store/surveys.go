@@ -396,14 +396,19 @@ func (s *Store) GetSurveyResults(projectID, surveyID int64) (*SurveyResults, err
 			GROUP BY score
 			ORDER BY score
 		`, projectID, surveyID)
-		if err == nil {
-			defer rows.Close()
-			for rows.Next() {
-				var sc, cnt int
-				if err := rows.Scan(&sc, &cnt); err == nil {
-					bucketMap[sc] = cnt
-				}
+		if err != nil {
+			return nil, fmt.Errorf("nps distribution: %w", err)
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var sc, cnt int
+			if err := rows.Scan(&sc, &cnt); err != nil {
+				return nil, fmt.Errorf("scan nps bucket: %w", err)
 			}
+			bucketMap[sc] = cnt
+		}
+		if err := rows.Err(); err != nil {
+			return nil, fmt.Errorf("iterate nps buckets: %w", err)
 		}
 		for i := 0; i <= 10; i++ {
 			results.Distribution = append(results.Distribution, ScoreBucket{Score: i, Count: bucketMap[i]})
@@ -442,14 +447,19 @@ func (s *Store) GetSurveyResults(projectID, surveyID int64) (*SurveyResults, err
 			GROUP BY score
 			ORDER BY score
 		`, projectID, surveyID)
-		if err == nil {
-			defer rows.Close()
-			for rows.Next() {
-				var sc, cnt int
-				if err := rows.Scan(&sc, &cnt); err == nil {
-					bucketMap[sc] = cnt
-				}
+		if err != nil {
+			return nil, fmt.Errorf("csat distribution: %w", err)
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var sc, cnt int
+			if err := rows.Scan(&sc, &cnt); err != nil {
+				return nil, fmt.Errorf("scan csat bucket: %w", err)
 			}
+			bucketMap[sc] = cnt
+		}
+		if err := rows.Err(); err != nil {
+			return nil, fmt.Errorf("iterate csat buckets: %w", err)
 		}
 		for i := 1; i <= 5; i++ {
 			results.Distribution = append(results.Distribution, ScoreBucket{Score: i, Count: bucketMap[i]})
@@ -465,15 +475,20 @@ func (s *Store) GetSurveyResults(projectID, surveyID int64) (*SurveyResults, err
 			WHERE project_id = $1 AND survey_id = $2 AND response_text != ''
 			GROUP BY response_text
 		`, projectID, surveyID)
-		if err == nil {
-			defer rows.Close()
-			for rows.Next() {
-				var txt string
-				var cnt int
-				if err := rows.Scan(&txt, &cnt); err == nil {
-					results.ChoiceCounts[txt] = cnt
-				}
+		if err != nil {
+			return nil, fmt.Errorf("single choice counts: %w", err)
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var txt string
+			var cnt int
+			if err := rows.Scan(&txt, &cnt); err != nil {
+				return nil, fmt.Errorf("scan choice count: %w", err)
 			}
+			results.ChoiceCounts[txt] = cnt
+		}
+		if err := rows.Err(); err != nil {
+			return nil, fmt.Errorf("iterate choice counts: %w", err)
 		}
 	}
 

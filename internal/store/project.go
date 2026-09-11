@@ -244,13 +244,19 @@ func (s *Store) DeleteProject(id int64) error {
 	if err != nil {
 		return err
 	}
+	defer rows.Close()
+
 	var sessions []string
 	for rows.Next() {
 		var sid string
-		_ = rows.Scan(&sid)
+		if err := rows.Scan(&sid); err != nil {
+			return fmt.Errorf("scan session id: %w", err)
+		}
 		sessions = append(sessions, sid)
 	}
-	rows.Close()
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("iterate sessions: %w", err)
+	}
 	tx, err := s.db.Begin()
 	if err != nil {
 		return err

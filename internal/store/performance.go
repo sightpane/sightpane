@@ -7,6 +7,7 @@ package store
 
 import (
 	"context"
+	"fmt"
 	"time"
 )
 
@@ -74,9 +75,15 @@ func (s *Store) GetPerformanceSummary(ctx context.Context, projectID int64, days
 	var ops []string
 	for opRows.Next() {
 		var o string
-		if err := opRows.Scan(&o); err == nil && o != "" {
+		if err := opRows.Scan(&o); err != nil {
+			return nil, fmt.Errorf("scan op: %w", err)
+		}
+		if o != "" {
 			ops = append(ops, o)
 		}
+	}
+	if err := opRows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate ops: %w", err)
 	}
 
 	// Fetch performance summary grouped by op, name
@@ -109,6 +116,9 @@ func (s *Store) GetPerformanceSummary(ctx context.Context, projectID int64, days
 			item.ErrorRate = float64(item.ErrorCount) / float64(item.Count)
 		}
 		summary = append(summary, item)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate performance summary: %w", err)
 	}
 
 	return &PerformanceResponse{
@@ -173,6 +183,9 @@ func (s *Store) GetTransactionDetail(ctx context.Context, projectID int64, op st
 		}
 		res.Daily = append(res.Daily, d)
 	}
+	if err := dailyRows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate daily performance: %w", err)
+	}
 
 	// 3. Slowest samples (top 20)
 	sampleRows, err := s.db.QueryContext(ctx, `
@@ -194,6 +207,9 @@ func (s *Store) GetTransactionDetail(ctx context.Context, projectID int64, op st
 			return nil, err
 		}
 		res.Samples = append(res.Samples, smp)
+	}
+	if err := sampleRows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate performance samples: %w", err)
 	}
 
 	return res, nil

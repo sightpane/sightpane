@@ -309,6 +309,9 @@ func (s *Store) GetTopSlowFunctions(
 			CallCount:   entry.calls,
 		})
 	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate flamegraph samples: %w", err)
+	}
 
 	sort.Slice(result, func(i, j int) bool {
 		if result[i].SelfTimeMs == result[j].SelfTimeMs {

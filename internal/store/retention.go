@@ -45,13 +45,25 @@ func (s *Store) PurgeExpired(ctx context.Context, defaultDays int) (int, error) 
 		}
 
 		var sessions []string
+		scanErr := false
 		for rows.Next() {
 			var sid string
-			if err := rows.Scan(&sid); err == nil {
-				sessions = append(sessions, sid)
+			if err := rows.Scan(&sid); err != nil {
+				log.Printf("retention scan project %d: %v", p.ID, err)
+				scanErr = true
+				break
 			}
+			sessions = append(sessions, sid)
+		}
+		if err := rows.Err(); err != nil {
+			log.Printf("retention iterate project %d: %v", p.ID, err)
+			rows.Close()
+			continue
 		}
 		rows.Close()
+		if scanErr {
+			continue
+		}
 
 		if len(sessions) == 0 {
 			continue
@@ -163,13 +175,25 @@ func (s *Store) SweepOrphanFrames(ctx context.Context) (int, error) {
 			continue
 		}
 		existing := make(map[string]bool, len(batch))
+		scanFailed := false
 		for rows.Next() {
 			var id string
-			if err := rows.Scan(&id); err == nil {
-				existing[id] = true
+			if err := rows.Scan(&id); err != nil {
+				log.Printf("sweep orphans scan batch: %v", err)
+				scanFailed = true
+				break
 			}
+			existing[id] = true
+		}
+		if err := rows.Err(); err != nil {
+			log.Printf("sweep orphans iterate batch: %v", err)
+			rows.Close()
+			continue
 		}
 		rows.Close()
+		if scanFailed {
+			continue
+		}
 
 		for _, sid := range batch {
 			if !existing[sid] {

@@ -65,9 +65,13 @@ func (s *Store) CalculateRetentionMatrix(
 		defer rows.Close()
 		for rows.Next() {
 			var uid string
-			if err := rows.Scan(&uid); err == nil {
-				cohortUserMap[uid] = true
+			if err := rows.Scan(&uid); err != nil {
+				return nil, fmt.Errorf("scan cohort member: %w", err)
 			}
+			cohortUserMap[uid] = true
+		}
+		if err := rows.Err(); err != nil {
+			return nil, fmt.Errorf("iterate cohort members: %w", err)
 		}
 	}
 
