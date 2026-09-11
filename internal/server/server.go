@@ -190,6 +190,15 @@ func New(st *store.Store, notifier *alert.Notifier, uiDir string, embedded fs.FS
 	api.Post("/projects/:id/fingerprint-rules", s.requireProject(roleOwner), s.createFingerprintRule)
 	api.Delete("/projects/:id/fingerprint-rules/:ruleId", s.requireProject(roleOwner), s.deleteFingerprintRule)
 
+	// Funnels
+	api.Get("/projects/:id/funnels", s.requireProject(roleViewer), s.listFunnels)
+	api.Post("/projects/:id/funnels", s.requireProject(roleMember), s.createFunnel)
+	api.Get("/projects/:id/funnels/:funnelId", s.requireProject(roleViewer), s.getFunnel)
+	api.Patch("/projects/:id/funnels/:funnelId", s.requireProject(roleMember), s.updateFunnel)
+	api.Delete("/projects/:id/funnels/:funnelId", s.requireProject(roleMember), s.deleteFunnel)
+	api.Get("/projects/:id/funnels/:funnelId/results", s.requireProject(roleViewer), s.getFunnelResults)
+	api.Get("/projects/:id/funnels/:funnelId/dropoffs", s.requireProject(roleViewer), s.getFunnelDropoffs)
+
 	// The dashboard is last so it never shadows an API route.
 	if s.ui != nil {
 		app.Use("/", s.ui)

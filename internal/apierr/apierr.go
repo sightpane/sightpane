@@ -60,6 +60,9 @@ const (
 	CodeAlertSendFailed      = "alert.send_failed"
 
 	CodeSearchInvalid = "search.invalid_query"
+
+	CodeInvalidInput   = "invalid_input"
+	CodeFunnelNotFound = "funnel.not_found"
 )
 
 // Error carries an HTTP status, a stable code and an English message.
