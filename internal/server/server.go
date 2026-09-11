@@ -199,6 +199,16 @@ func New(st *store.Store, notifier *alert.Notifier, uiDir string, embedded fs.FS
 	api.Get("/projects/:id/funnels/:funnelId/results", s.requireProject(roleViewer), s.getFunnelResults)
 	api.Get("/projects/:id/funnels/:funnelId/dropoffs", s.requireProject(roleViewer), s.getFunnelDropoffs)
 
+	// Cohorts & Retention
+	api.Get("/projects/:id/cohorts", s.requireProject(roleViewer), s.listCohorts)
+	api.Post("/projects/:id/cohorts", s.requireProject(roleMember), s.createCohort)
+	api.Get("/projects/:id/cohorts/:cohortId", s.requireProject(roleViewer), s.getCohort)
+	api.Patch("/projects/:id/cohorts/:cohortId", s.requireProject(roleMember), s.updateCohort)
+	api.Delete("/projects/:id/cohorts/:cohortId", s.requireProject(roleMember), s.deleteCohort)
+	api.Get("/projects/:id/cohorts/:cohortId/members", s.requireProject(roleViewer), s.listCohortMembers)
+	api.Post("/projects/:id/cohorts/:cohortId/refresh", s.requireProject(roleMember), s.refreshCohort)
+	api.Get("/projects/:id/retention", s.requireProject(roleViewer), s.getRetentionMatrix)
+
 	// The dashboard is last so it never shadows an API route.
 	if s.ui != nil {
 		app.Use("/", s.ui)
