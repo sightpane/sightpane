@@ -209,6 +209,10 @@ func New(st *store.Store, notifier *alert.Notifier, uiDir string, embedded fs.FS
 	api.Post("/projects/:id/cohorts/:cohortId/refresh", s.requireProject(roleMember), s.refreshCohort)
 	api.Get("/projects/:id/retention", s.requireProject(roleViewer), s.getRetentionMatrix)
 
+	// User Paths / Flows
+	api.Get("/projects/:id/paths", s.requireProject(roleViewer), s.getPathFlow)
+	api.Get("/projects/:id/paths/sessions", s.requireProject(roleViewer), s.getPathSessions)
+
 	// The dashboard is last so it never shadows an API route.
 	if s.ui != nil {
 		app.Use("/", s.ui)
