@@ -22,6 +22,16 @@ look · Fix shape · Acceptance). Every file is written with code coordinates; t
 | 11 | [11-storage-backend.md](11-storage-backend.md) | **done** | Frame/object store (S3); the SQL side moved to 0b |
 | 12 | [12-object-storage-ceph.md](12-object-storage-ceph.md) | **done** | Replay frames in Ceph/S3 object storage instead of a local volume |
 | 13 | [13-multi-platform-sdks.md](13-multi-platform-sdks.md) | **done** | Web/React and React Native SDKs, a DOM replay item type, and a platform-neutral name |
+| 14 | [14-funnels-conversion.md](14-funnels-conversion.md) | planned | Multi-step conversion funnels, drop-off analysis, and direct link to session replays |
+| 15 | [15-feature-flags.md](15-feature-flags.md) | planned | Feature flags & remote configuration, percentage rollouts, user targeting, offline caching |
+| 16 | [16-ab-testing-experiments.md](16-ab-testing-experiments.md) | planned | A/B testing & experiments, variant assignment, statistical significance & confidence intervals |
+| 17 | [17-cohorts-retention.md](17-cohorts-retention.md) | planned | Behavioral user cohorts and N-day/week retention matrix heatmaps |
+| 18 | [18-custom-dashboards-insights.md](18-custom-dashboards-insights.md) | planned | Custom multi-metric dashboards, dynamic insight query builder, formula metrics, custom tiles |
+| 19 | [19-user-paths-flows.md](19-user-paths-flows.md) | planned | User paths & journey flows with interactive Sankey diagrams before/after key events |
+| 20 | [20-surveys-user-feedback.md](20-surveys-user-feedback.md) | planned | In-app micro-surveys (NPS, CSAT, bug reports) targeted by route/event and linked to replays |
+| 21 | [21-cron-job-monitoring.md](21-cron-job-monitoring.md) | planned | Cron job and scheduled task heartbeat monitoring, crontab parser, missed run alerts |
+| 22 | [22-distributed-tracing-spans.md](22-distributed-tracing-spans.md) | planned | Distributed tracing, W3C traceparent propagation across services, and waterfall span flame chart |
+| 23 | [23-metric-alerts-anomaly-detection.md](23-metric-alerts-anomaly-detection.md) | planned | Metric threshold alert engine, rolling window evaluators, and anomaly spike detection |
+| 24 | [24-profiling-cpu-memory.md](24-profiling-cpu-memory.md) | planned | Continuous CPU & memory profiling, call trees, and interactive flame graph visualizer |
+| 25 | [25-uptime-synthetic-monitoring.md](25-uptime-synthetic-monitoring.md) | planned | Exterior uptime monitoring, synthetic HTTP/TCP ping health checks, and SSL expiry warnings |
 
-Deliberately left out: Sentry's DOM-based web replay (sightpane's frame-based recording was
-preferred because it works on web and desktop), profiling, cron monitoring, uptime monitoring.
