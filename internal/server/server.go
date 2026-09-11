@@ -181,6 +181,13 @@ func New(st *store.Store, notifier *alert.Notifier, uiDir string, embedded fs.FS
 	api.Get("/projects/:id/traces/:traceId", s.requireProject(roleViewer), s.getTrace)
 	api.Post("/projects/:id/spans", s.ingestSpans)
 
+	// Continuous Profiling & Flame Charts.
+	api.Get("/projects/:id/profiles", s.requireProject(roleViewer), s.listProfiles)
+	api.Get("/projects/:id/profiles/functions/top", s.requireProject(roleViewer), s.getTopSlowFunctions)
+	api.Get("/projects/:id/profiles/:profileId", s.requireProject(roleViewer), s.getProfile)
+	api.Post("/projects/:id/profiles", s.createProfile)
+
+
 
 	// Session and issue details are addressed globally, so each one resolves its
 	// own project before checking membership.

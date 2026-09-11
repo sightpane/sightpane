@@ -64,6 +64,13 @@ type itemHead struct {
 	TraceID      string          `json:"trace_id"`
 	Tags         json.RawMessage `json:"tags"`
 	Spans        []spanChild     `json:"spans"`
+
+	// Continuous profiling
+	TransactionName string          `json:"transaction_name"`
+	CPUTimeMs       float64         `json:"cpu_time_ms"`
+	ThreadName      string          `json:"thread_name"`
+	Platform        string          `json:"platform"`
+	ProfileData     json.RawMessage `json:"profile_data"`
 }
 
 type spanChild struct {
@@ -468,6 +475,37 @@ func (s *Store) Ingest(ctx context.Context, projectID int64, env *Envelope, ip s
 				}
 			}
 			if _, err := tx.Exec(`INSERT INTO items(session_id, project_id, ts, type, name, body_json) VALUES($1,$2,$3,$4,$5,$6)`, env.Session.ID, projectID, ts, h.Type, name, string(raw)); err != nil {
+				return nil, err
+			}
+		case "profile":
+			txName := h.TransactionName
+			if txName == "" {
+				txName = h.Name
+			}
+			thread := h.ThreadName
+			if thread == "" {
+				thread = "main"
+			}
+			dur := h.DurationMs
+			cpu := h.CPUTimeMs
+			if cpu <= 0 {
+				cpu = dur
+			}
+			profData := h.ProfileData
+			if len(profData) == 0 {
+				profData = json.RawMessage("{}")
+			}
+			var sessID any
+			if env.Session.ID != "" {
+				sessID = env.Session.ID
+			}
+			plat := h.Platform
+			if plat == "" {
+				plat = d.Platform
+			}
+			if _, err := tx.Exec(`INSERT INTO profiles(project_id, transaction_name, session_id, trace_id, duration_ms, cpu_time_ms, thread_name, platform, profile_data, created_at)
+				VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
+				projectID, txName, sessID, h.TraceID, dur, cpu, thread, plat, profData, ts); err != nil {
 				return nil, err
 			}
 		default:
