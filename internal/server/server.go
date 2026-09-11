@@ -97,6 +97,8 @@ func New(st *store.Store, notifier *alert.Notifier, uiDir string, embedded fs.FS
 	// SDK ingest: authenticated by the project's API key, not a user token.
 	api.Post("/envelope", s.ingest)
 	api.Post("/flags/evaluate", s.evaluateFlags)
+	api.Get("/surveys/active", s.activeSurveys)
+	api.Post("/surveys/:surveyId/responses", s.submitSurveyResponse)
 	api.Get("/health", s.health)
 
 	// Identity.
@@ -230,6 +232,15 @@ func New(st *store.Store, notifier *alert.Notifier, uiDir string, embedded fs.FS
 	api.Delete("/projects/:id/experiments/:expId", s.requireProject(roleMember), s.deleteExperiment)
 	api.Get("/projects/:id/experiments/:expId/results", s.requireProject(roleViewer), s.getExperimentResults)
 	api.Post("/projects/:id/experiments/:expId/winner", s.requireProject(roleMember), s.declareExperimentWinner)
+
+	// Surveys & User Feedback
+	api.Get("/projects/:id/surveys", s.requireProject(roleViewer), s.listSurveys)
+	api.Post("/projects/:id/surveys", s.requireProject(roleMember), s.createSurvey)
+	api.Get("/projects/:id/surveys/:surveyId", s.requireProject(roleViewer), s.getSurvey)
+	api.Put("/projects/:id/surveys/:surveyId", s.requireProject(roleMember), s.updateSurvey)
+	api.Delete("/projects/:id/surveys/:surveyId", s.requireProject(roleMember), s.deleteSurvey)
+	api.Get("/projects/:id/surveys/:surveyId/results", s.requireProject(roleViewer), s.getSurveyResults)
+	api.Get("/projects/:id/surveys/:surveyId/responses", s.requireProject(roleViewer), s.listSurveyResponses)
 
 	// The dashboard is last so it never shadows an API route.
 	if s.ui != nil {

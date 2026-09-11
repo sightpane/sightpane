@@ -26,7 +26,10 @@ func projectKey(c fiber.Ctx) string {
 	if k := c.Get("X-Sightpane-Key"); k != "" {
 		return k
 	}
-	return c.Get("X-Hog-Key")
+	if k := c.Get("X-Hog-Key"); k != "" {
+		return k
+	}
+	return c.Query("key")
 }
 
 // ingest is the SDK's only endpoint. It is authenticated by the project's API
