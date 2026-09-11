@@ -176,6 +176,11 @@ func New(st *store.Store, notifier *alert.Notifier, uiDir string, embedded fs.FS
 	api.Get("/projects/:id/performance/detail", s.requireProject(roleViewer), s.getTransactionDetail)
 	api.Get("/projects/:id/performance/transactions/*", s.requireProject(roleViewer), s.getTransactionDetail)
 
+	// Distributed Tracing & Spans.
+	api.Get("/projects/:id/traces", s.requireProject(roleViewer), s.listTraces)
+	api.Get("/projects/:id/traces/:traceId", s.requireProject(roleViewer), s.getTrace)
+	api.Post("/projects/:id/spans", s.ingestSpans)
+
 
 	// Session and issue details are addressed globally, so each one resolves its
 	// own project before checking membership.

@@ -29,6 +29,7 @@ type PerformanceResponse struct {
 type SpanSample struct {
 	ID         int64     `json:"id"`
 	SessionID  string    `json:"session_id"`
+	TraceID    string    `json:"trace_id"`
 	TS         time.Time `json:"ts"`
 	DurationMs float64   `json:"duration_ms"`
 	Status     string    `json:"status"`
@@ -176,7 +177,7 @@ func (s *Store) GetTransactionDetail(ctx context.Context, projectID int64, op st
 	// 3. Slowest samples (top 20)
 	sampleRows, err := s.db.QueryContext(ctx, `
 		SELECT
-			id, session_id, ts, duration_ms, status, tags_json
+			id, session_id, trace_id, ts, duration_ms, status, tags_json
 		FROM spans
 		WHERE project_id=$1 AND ts>=$2 AND name=$3 AND ($4 = '' OR op = $4)
 		ORDER BY duration_ms DESC
@@ -189,7 +190,7 @@ func (s *Store) GetTransactionDetail(ctx context.Context, projectID int64, op st
 
 	for sampleRows.Next() {
 		var smp SpanSample
-		if err := sampleRows.Scan(&smp.ID, &smp.SessionID, &smp.TS, &smp.DurationMs, &smp.Status, &smp.TagsJSON); err != nil {
+		if err := sampleRows.Scan(&smp.ID, &smp.SessionID, &smp.TraceID, &smp.TS, &smp.DurationMs, &smp.Status, &smp.TagsJSON); err != nil {
 			return nil, err
 		}
 		res.Samples = append(res.Samples, smp)
