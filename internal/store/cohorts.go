@@ -241,9 +241,13 @@ func (s *Store) ListCohortMembers(projectID, cohortID int64, limit int) ([]strin
 	var members []string
 	for rows.Next() {
 		var uid string
-		if err := rows.Scan(&uid); err == nil {
-			members = append(members, uid)
+		if err := rows.Scan(&uid); err != nil {
+			return nil, fmt.Errorf("scan cohort member: %w", err)
 		}
+		members = append(members, uid)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate cohort members: %w", err)
 	}
 	return members, nil
 }
@@ -274,49 +278,69 @@ func (s *Store) RefreshCohortMembers(projectID, cohortID int64) error {
 
 		if rule.Event == "" || rule.Event == "session_start" {
 			// Count sessions per user
-			rows, err := s.db.Query(`
-				SELECT user_id, COUNT(*) as cnt
-				FROM sessions
-				WHERE project_id = $1 AND started_at >= $2 AND user_id != ''
-				GROUP BY user_id
-			`, projectID, cutoff)
-			if err != nil {
-				return fmt.Errorf("evaluate session rule: %w", err)
-			}
-			defer rows.Close()
+			err := func() error {
+				rows, err := s.db.Query(`
+					SELECT user_id, COUNT(*) as cnt
+					FROM sessions
+					WHERE project_id = $1 AND started_at >= $2 AND user_id != ''
+					GROUP BY user_id
+				`, projectID, cutoff)
+				if err != nil {
+					return fmt.Errorf("evaluate session rule: %w", err)
+				}
+				defer rows.Close()
 
-			for rows.Next() {
-				var uid string
-				var cnt int
-				if err := rows.Scan(&uid, &cnt); err == nil {
+				for rows.Next() {
+					var uid string
+					var cnt int
+					if err := rows.Scan(&uid, &cnt); err != nil {
+						return fmt.Errorf("scan session rule: %w", err)
+					}
 					if evalCount(cnt, rule.Operator, rule.Count) {
 						ruleUsers[uid] = true
 					}
 				}
+				if err := rows.Err(); err != nil {
+					return fmt.Errorf("iterate session rule: %w", err)
+				}
+				return nil
+			}()
+			if err != nil {
+				return err
 			}
 		} else {
 			// Count events per user from items
 			// Items table has session_id, join with sessions to get user_id
-			rows, err := s.db.Query(`
-				SELECT s.user_id, COUNT(*) as cnt
-				FROM items i
-				JOIN sessions s ON s.id = i.session_id AND s.project_id = i.project_id
-				WHERE i.project_id = $1 AND i.type = 'event' AND i.name = $2 AND i.ts >= $3 AND s.user_id != ''
-				GROUP BY s.user_id
-			`, projectID, rule.Event, cutoff)
-			if err != nil {
-				return fmt.Errorf("evaluate event rule: %w", err)
-			}
-			defer rows.Close()
+			err := func() error {
+				rows, err := s.db.Query(`
+					SELECT s.user_id, COUNT(*) as cnt
+					FROM items i
+					JOIN sessions s ON s.id = i.session_id AND s.project_id = i.project_id
+					WHERE i.project_id = $1 AND i.type = 'event' AND i.name = $2 AND i.ts >= $3 AND s.user_id != ''
+					GROUP BY s.user_id
+				`, projectID, rule.Event, cutoff)
+				if err != nil {
+					return fmt.Errorf("evaluate event rule: %w", err)
+				}
+				defer rows.Close()
 
-			for rows.Next() {
-				var uid string
-				var cnt int
-				if err := rows.Scan(&uid, &cnt); err == nil {
+				for rows.Next() {
+					var uid string
+					var cnt int
+					if err := rows.Scan(&uid, &cnt); err != nil {
+						return fmt.Errorf("scan event rule: %w", err)
+					}
 					if evalCount(cnt, rule.Operator, rule.Count) {
 						ruleUsers[uid] = true
 					}
 				}
+				if err := rows.Err(); err != nil {
+					return fmt.Errorf("iterate event rule: %w", err)
+				}
+				return nil
+			}()
+			if err != nil {
+				return err
 			}
 		}
 
