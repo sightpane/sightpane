@@ -8,9 +8,17 @@
 SELECT create_hypertable('items', 'ts', chunk_time_interval => interval '1 day', migrate_data => true, if_not_exists => true);
 
 -- A database that ran on a Postgres without the extension has items_daily as an
--- ordinary view; it has to go before the aggregate can take the name. On a fresh
--- database, and on a rerun, this is a no-op.
-DROP VIEW IF EXISTS items_daily;
+-- ordinary view; it has to go before the aggregate can take the name. If it is
+-- already a continuous aggregate (pg_matviews), DROP VIEW would fail.
+DO $$
+BEGIN
+  IF EXISTS (
+    SELECT 1 FROM pg_views
+    WHERE schemaname = current_schema() AND viewname = 'items_daily'
+  ) THEN
+    EXECUTE 'DROP VIEW items_daily';
+  END IF;
+END $$;
 
 -- The dashboard refetches project stats every second and the events page groups
 -- by day, so both read the daily counts from here instead of scanning items.

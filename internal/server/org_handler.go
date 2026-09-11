@@ -32,7 +32,7 @@ func (s *Server) listOrgs(c fiber.Ctx) error {
 
 func (s *Server) createOrg(c fiber.Ctx) error {
 	var req createOrgReq
-	if err := c.Bind().Body(&req); err != nil {
+	if err := c.Bind().JSON(&req); err != nil {
 		return apierr.New(fiber.StatusBadRequest, apierr.CodeBadJSON, "malformed request body")
 	}
 	req.Name = strings.TrimSpace(req.Name)
@@ -62,7 +62,7 @@ func (s *Server) getOrg(c fiber.Ctx) error {
 func (s *Server) updateOrg(c fiber.Ctx) error {
 	orgID := pathID(c, "id")
 	var req createOrgReq
-	if err := c.Bind().Body(&req); err != nil {
+	if err := c.Bind().JSON(&req); err != nil {
 		return apierr.New(fiber.StatusBadRequest, apierr.CodeBadJSON, "malformed request body")
 	}
 	if err := s.store.UpdateOrg(orgID, req.Name); err != nil {
@@ -106,7 +106,7 @@ func (s *Server) listOrgMembers(c fiber.Ctx) error {
 func (s *Server) addOrgMember(c fiber.Ctx) error {
 	orgID := pathID(c, "id")
 	var req addOrgMemberReq
-	if err := c.Bind().Body(&req); err != nil {
+	if err := c.Bind().JSON(&req); err != nil {
 		return apierr.New(fiber.StatusBadRequest, apierr.CodeBadJSON, "malformed request body")
 	}
 	req.Email = strings.TrimSpace(strings.ToLower(req.Email))
@@ -139,7 +139,7 @@ func (s *Server) updateOrgMemberRole(c fiber.Ctx) error {
 	orgID := pathID(c, "id")
 	targetUID := pathID(c, "uid")
 	var req updateOrgMemberRoleReq
-	if err := c.Bind().Body(&req); err != nil {
+	if err := c.Bind().JSON(&req); err != nil {
 		return apierr.New(fiber.StatusBadRequest, apierr.CodeBadJSON, "malformed request body")
 	}
 	if err := s.store.UpdateOrgMemberRole(orgID, targetUID, req.Role); err != nil {
@@ -198,7 +198,7 @@ func (s *Server) listOrgAPITokens(c fiber.Ctx) error {
 func (s *Server) createOrgAPIToken(c fiber.Ctx) error {
 	orgID := pathID(c, "id")
 	var req createTokenReq
-	if err := c.Bind().Body(&req); err != nil {
+	if err := c.Bind().JSON(&req); err != nil {
 		return apierr.New(fiber.StatusBadRequest, apierr.CodeBadJSON, "malformed request body")
 	}
 	var expiresAt *time.Time

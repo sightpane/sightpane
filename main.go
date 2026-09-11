@@ -101,6 +101,9 @@ func main() {
 	log.Printf("sightpane listening on %s (db %s, data %s, frames %s, project %q key %q, admin %s, proxy_protocol=%v, retention=%dd, ingest_rate=%d/min)",
 		cfg.Addr, st.Driver(), cfg.DataDir, st.Frames(), cfg.DefaultProject, cfg.DefaultKey, cfg.AdminEmail, cfg.ProxyProtocol, cfg.RetentionDays, cfg.IngestRate)
 
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
 	stop := make(chan os.Signal, 1)
 	signal.Notify(stop, os.Interrupt, syscall.SIGTERM)
 	defer signal.Stop(stop)
@@ -108,6 +111,7 @@ func main() {
 	// Daily data retention job
 	retentionTicker := time.NewTicker(24 * time.Hour)
 	go func() {
+		defer retentionTicker.Stop()
 		// Run initial sweep after short delay
 		select {
 		case <-time.After(1 * time.Minute):
@@ -116,8 +120,7 @@ func main() {
 			} else if n > 0 {
 				log.Printf("retention cleanup: purged %d expired sessions", n)
 			}
-		case <-stop:
-			retentionTicker.Stop()
+		case <-ctx.Done():
 			return
 		}
 		for {
@@ -128,8 +131,7 @@ func main() {
 				} else if n > 0 {
 					log.Printf("retention cleanup: purged %d expired sessions", n)
 				}
-			case <-stop:
-				retentionTicker.Stop()
+			case <-ctx.Done():
 				return
 			}
 		}
@@ -146,10 +148,12 @@ func main() {
 
 	select {
 	case err := <-serveErr:
+		cancel()
 		if err != nil && !errors.Is(err, net.ErrClosed) {
 			log.Fatalf("serve: %v", err)
 		}
 	case sig := <-stop:
+		cancel()
 		log.Printf("%s received, finishing in-flight requests (up to %s)", sig, shutdownGrace)
 		if err := app.ShutdownWithTimeout(shutdownGrace); err != nil {
 			log.Printf("shutdown: %v", err)

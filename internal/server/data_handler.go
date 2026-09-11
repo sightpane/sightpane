@@ -127,7 +127,7 @@ func (s *Server) resolveIssue(c fiber.Ctx) error {
 	var req struct {
 		Release string `json:"release"`
 	}
-	_ = c.Bind().Body(&req)
+	_ = c.Bind().JSON(&req)
 	rel := req.Release
 	if rel == "" {
 		rel = c.Query("release")
@@ -157,7 +157,7 @@ func (s *Server) assignIssue(c fiber.Ctx) error {
 		return err
 	}
 	var req assignReq
-	if err := c.Bind().Body(&req); err != nil {
+	if err := c.Bind().JSON(&req); err != nil {
 		return apierr.New(fiber.StatusBadRequest, "invalid_json", "invalid json body")
 	}
 	if err := s.store.AssignIssue(id, req.UserID); err != nil {
@@ -176,7 +176,7 @@ func (s *Server) setIssueStatus(c fiber.Ctx) error {
 		return err
 	}
 	var req statusReq
-	if err := c.Bind().Body(&req); err != nil {
+	if err := c.Bind().JSON(&req); err != nil {
 		return apierr.New(fiber.StatusBadRequest, "invalid_json", "invalid json body")
 	}
 	if err := s.store.SetIssueStatus(id, req.Status); err != nil {
@@ -196,7 +196,7 @@ func (s *Server) snoozeIssue(c fiber.Ctx) error {
 		return err
 	}
 	var req snoozeReq
-	if err := c.Bind().Body(&req); err != nil {
+	if err := c.Bind().JSON(&req); err != nil {
 		return apierr.New(fiber.StatusBadRequest, "invalid_json", "invalid json body")
 	}
 	if err := s.store.SnoozeIssue(id, req.Until, req.CountThreshold); err != nil {
@@ -215,13 +215,19 @@ func (s *Server) mergeIssue(c fiber.Ctx) error {
 		return err
 	}
 	var req mergeReq
-	if err := c.Bind().Body(&req); err != nil {
+	if err := c.Bind().JSON(&req); err != nil {
 		return apierr.New(fiber.StatusBadRequest, "invalid_json", "invalid json body")
 	}
 	if req.TargetID <= 0 {
 		return apierr.New(fiber.StatusBadRequest, "invalid_target", "invalid target_id")
 	}
 	if err := s.store.MergeIssue(id, req.TargetID); err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			return apierr.New(fiber.StatusNotFound, "not_found", "issue not found")
+		}
+		if errors.Is(err, store.ErrCrossProjectMerge) {
+			return apierr.New(fiber.StatusForbidden, "forbidden", err.Error())
+		}
 		return apierr.New(fiber.StatusBadRequest, "merge_failed", err.Error())
 	}
 	return c.JSON(fiber.Map{"status": "merged"})
@@ -253,7 +259,7 @@ func (s *Server) addIssueComment(c fiber.Ctx) error {
 		return apierr.New(fiber.StatusUnauthorized, apierr.CodeLoginRequired, "login required")
 	}
 	var req commentReq
-	if err := c.Bind().Body(&req); err != nil {
+	if err := c.Bind().JSON(&req); err != nil {
 		return apierr.New(fiber.StatusBadRequest, "invalid_json", "invalid json body")
 	}
 	if strings.TrimSpace(req.Body) == "" {
@@ -277,7 +283,7 @@ func (s *Server) listFingerprintRules(c fiber.Ctx) error {
 func (s *Server) createFingerprintRule(c fiber.Ctx) error {
 	pid := pathID(c, "id")
 	var r store.ProjectFingerprintRule
-	if err := c.Bind().Body(&r); err != nil {
+	if err := c.Bind().JSON(&r); err != nil {
 		return apierr.New(fiber.StatusBadRequest, "invalid_json", "invalid json body")
 	}
 	r.ProjectID = pid

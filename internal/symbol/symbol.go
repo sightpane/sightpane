@@ -149,6 +149,13 @@ func (c *Cache) Resolve(ctx context.Context, projectID int64, release string, fr
 	return out
 }
 
+// maxCacheEntries caps the maximum number of distinct entries (including missing ones)
+// so negative cache entries cannot grow unbounded in memory.
+const maxCacheEntries = 2048
+
+// missingEntryBytes is the nominal size assigned to negative cache entries.
+const missingEntryBytes = 1024
+
 // consumer returns the parsed map for one script, or nil when there is none.
 func (c *Cache) consumer(ctx context.Context, projectID int64, release, filename string) *sourcemap.Consumer {
 	if filename == "" {
@@ -177,6 +184,7 @@ func (c *Cache) consumer(ctx context.Context, projectID int64, release, filename
 	switch {
 	case errors.Is(err, ErrNoMap):
 		e.missing = true
+		e.size = missingEntryBytes
 	case err != nil:
 		// A store that is down should not be remembered as "no map": leave it
 		// uncached so the next error tries again.
@@ -187,6 +195,7 @@ func (c *Cache) consumer(ctx context.Context, projectID int64, release, filename
 			// A map that will not parse is not going to start parsing, so it is
 			// cached as missing rather than re-read for every error.
 			e.missing = true
+			e.size = missingEntryBytes
 		} else {
 			e.consumer, e.size = cons, int64(len(raw))
 		}
@@ -214,7 +223,7 @@ func (c *Cache) consumer(ctx context.Context, projectID int64, release, filename
 // evict drops least-recently-used entries until the cache is inside its bound.
 // The caller holds the lock.
 func (c *Cache) evict() {
-	for c.bytes > c.maxBytes && c.order.Len() > 1 {
+	for (c.bytes > c.maxBytes || c.order.Len() > maxCacheEntries) && c.order.Len() > 1 {
 		back := c.order.Back()
 		e := back.Value.(*entry)
 		c.order.Remove(back)

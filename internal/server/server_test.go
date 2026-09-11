@@ -1380,6 +1380,107 @@ func TestIssueWorkflowEndpoints(t *testing.T) {
 	}
 }
 
+func TestIssueMergeEndpoint(t *testing.T) {
+	app, st := newTestServer(t)
+
+	u, _, err := st.UserByEmail("owner@x.io")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Create a second project owned by the same user
+	proj2, err := st.CreateProject("Proj 2", "web", "key2", &u.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Ingest an error into project 1
+	post(t, app, "/api/v1/envelope", "key1", map[string]any{
+		"sdk": map[string]any{"name": "sightpane", "version": "0.1.0"},
+		"session": map[string]any{
+			"id":         "sess-p1-1",
+			"started_at": time.Now().UTC().Format(time.RFC3339Nano),
+		},
+		"items": []map[string]any{
+			{"type": "error", "message": "error 1 in p1", "exception": "Exception1"},
+		},
+	})
+	// Ingest a second error into project 1
+	post(t, app, "/api/v1/envelope", "key1", map[string]any{
+		"sdk": map[string]any{"name": "sightpane", "version": "0.1.0"},
+		"session": map[string]any{
+			"id":         "sess-p1-2",
+			"started_at": time.Now().UTC().Format(time.RFC3339Nano),
+		},
+		"items": []map[string]any{
+			{"type": "error", "message": "error 2 in p1", "exception": "Exception2"},
+		},
+	})
+	// Ingest an error into project 2
+	post(t, app, "/api/v1/envelope", "key2", map[string]any{
+		"sdk": map[string]any{"name": "sightpane", "version": "0.1.0"},
+		"session": map[string]any{
+			"id":         "sess-p2-1",
+			"started_at": time.Now().UTC().Format(time.RFC3339Nano),
+		},
+		"items": []map[string]any{
+			{"type": "error", "message": "error in p2", "exception": "ExceptionP2"},
+		},
+	})
+
+	var p1Issues []store.Issue
+	rr := get(t, app, "/api/v1/projects/1/issues", &p1Issues)
+	if rr.Code != 200 || len(p1Issues) != 2 {
+		t.Fatalf("expected 2 issues in p1, got %d", len(p1Issues))
+	}
+
+	var p2Issues []store.Issue
+	rr = get(t, app, fmt.Sprintf("/api/v1/projects/%d/issues", proj2.ID), &p2Issues)
+	if rr.Code != 200 || len(p2Issues) != 1 {
+		t.Fatalf("expected 1 issue in p2, got %d", len(p2Issues))
+	}
+
+	// 1. Cross-project merge must fail with 403 Forbidden
+	rr = post(t, app, fmt.Sprintf("/api/v1/issues/%d/merge", p1Issues[0].ID), "", map[string]any{
+		"target_id": p2Issues[0].ID,
+	})
+	if rr.Code != 403 {
+		t.Fatalf("expected 403 for cross-project merge, got %d %s", rr.Code, rr.Body.String())
+	}
+
+	// 2. Non-existent target must return 404
+	rr = post(t, app, fmt.Sprintf("/api/v1/issues/%d/merge", p1Issues[0].ID), "", map[string]any{
+		"target_id": 999999,
+	})
+	if rr.Code != 404 {
+		t.Fatalf("expected 404 for non-existent target, got %d %s", rr.Code, rr.Body.String())
+	}
+
+	// 3. Non-existent source must return 404
+	rr = post(t, app, "/api/v1/issues/999999/merge", "", map[string]any{
+		"target_id": p1Issues[0].ID,
+	})
+	if rr.Code != 404 {
+		t.Fatalf("expected 404 for non-existent source, got %d %s", rr.Code, rr.Body.String())
+	}
+
+	// 4. Invalid target_id <= 0 must return 400
+	rr = post(t, app, fmt.Sprintf("/api/v1/issues/%d/merge", p1Issues[0].ID), "", map[string]any{
+		"target_id": 0,
+	})
+	if rr.Code != 400 {
+		t.Fatalf("expected 400 for invalid target_id, got %d %s", rr.Code, rr.Body.String())
+	}
+
+	// 5. Valid same-project merge must succeed with 200
+	rr = post(t, app, fmt.Sprintf("/api/v1/issues/%d/merge", p1Issues[1].ID), "", map[string]any{
+		"target_id": p1Issues[0].ID,
+	})
+	if rr.Code != 200 {
+		t.Fatalf("expected 200 for valid merge, got %d %s", rr.Code, rr.Body.String())
+	}
+}
+
 func TestReleaseHealthAndRegression(t *testing.T) {
 	app, _ := newTestServer(t)
 	stack := "#0 main (package:app/main.dart:10:5)"

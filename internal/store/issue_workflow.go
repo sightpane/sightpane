@@ -6,6 +6,7 @@
 package store
 
 import (
+	"database/sql"
 	"errors"
 	"path/filepath"
 	"strings"
@@ -76,6 +77,8 @@ func (s *Store) SnoozeIssue(id int64, until *time.Time, countThreshold int) erro
 	return err
 }
 
+var ErrCrossProjectMerge = errors.New("cannot merge issues across different projects")
+
 func (s *Store) MergeIssue(sourceID, targetID int64) error {
 	if sourceID == targetID {
 		return errors.New("cannot merge issue into itself")
@@ -86,9 +89,33 @@ func (s *Store) MergeIssue(sourceID, targetID int64) error {
 	}
 	defer tx.Rollback()
 
+	var sourceProjID int64
 	var sourceCount int
-	if err := tx.QueryRow(`SELECT count FROM issues WHERE id=$1`, sourceID).Scan(&sourceCount); err != nil {
+	var sourceMergedInto *int64
+	if err := tx.QueryRow(`SELECT project_id, count, merged_into FROM issues WHERE id=$1`, sourceID).Scan(&sourceProjID, &sourceCount, &sourceMergedInto); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return ErrNotFound
+		}
 		return err
+	}
+
+	var targetProjID int64
+	var targetMergedInto *int64
+	if err := tx.QueryRow(`SELECT project_id, merged_into FROM issues WHERE id=$1`, targetID).Scan(&targetProjID, &targetMergedInto); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return ErrNotFound
+		}
+		return err
+	}
+
+	if sourceProjID != targetProjID {
+		return ErrCrossProjectMerge
+	}
+	if sourceMergedInto != nil {
+		return errors.New("cannot merge an already merged issue")
+	}
+	if targetMergedInto != nil {
+		return errors.New("cannot merge into an already merged issue")
 	}
 
 	if _, err := tx.Exec(`UPDATE issues SET merged_into=$1, status='ignored' WHERE id=$2`, targetID, sourceID); err != nil {
@@ -99,7 +126,7 @@ func (s *Store) MergeIssue(sourceID, targetID int64) error {
 		return err
 	}
 
-	if _, err := tx.Exec(`UPDATE items SET issue_id=$1 WHERE issue_id=$2`, targetID, sourceID); err != nil {
+	if _, err := tx.Exec(`UPDATE items SET issue_id=$1 WHERE issue_id=$2 AND project_id=$3`, targetID, sourceID, sourceProjID); err != nil {
 		return err
 	}
 

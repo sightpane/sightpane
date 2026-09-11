@@ -245,3 +245,27 @@ func TestCleanSource(t *testing.T) {
 		}
 	}
 }
+
+func TestCacheEvictsMissingEntries(t *testing.T) {
+	l := newLoader(nil) // no maps at all
+	// Cap byte budget so 2 missing entries (at 1024 bytes each) fit, but a 3rd evicts the 1st
+	c := New(l, 2*missingEntryBytes)
+	frame := []Frame{{URI: "https://x/main.dart.js", Line: 1, Column: 1}}
+
+	c.Resolve(context.Background(), 1, "rel1", frame)
+	c.Resolve(context.Background(), 1, "rel2", frame)
+	if l.calls != 2 {
+		t.Fatalf("setup: %d loads, want 2", l.calls)
+	}
+	// rel3 should cause rel1 to be evicted
+	c.Resolve(context.Background(), 1, "rel3", frame)
+	if l.calls != 3 {
+		t.Fatalf("rel3 load: %d loads, want 3", l.calls)
+	}
+	// rel1 should now reload since it was evicted
+	c.Resolve(context.Background(), 1, "rel1", frame)
+	if l.calls != 4 {
+		t.Fatalf("rel1 was not evicted: %d loads, want 4", l.calls)
+	}
+}
+

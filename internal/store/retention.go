@@ -57,29 +57,54 @@ func (s *Store) PurgeExpired(ctx context.Context, defaultDays int) (int, error) 
 			continue
 		}
 
-		tx, err := s.db.BeginTx(ctx, nil)
-		if err != nil {
-			return totalPurged, err
-		}
+		const batchSize = 500
+		for i := 0; i < len(sessions); i += batchSize {
+			end := i + batchSize
+			if end > len(sessions) {
+				end = len(sessions)
+			}
+			batch := sessions[i:end]
 
-		for _, sid := range sessions {
-			_, _ = tx.ExecContext(ctx, `DELETE FROM frames WHERE session_id=$1`, sid)
-			_, _ = tx.ExecContext(ctx, `DELETE FROM items WHERE session_id=$1`, sid)
-			_, _ = tx.ExecContext(ctx, `DELETE FROM spans WHERE session_id=$1`, sid)
-			_, _ = tx.ExecContext(ctx, `DELETE FROM sessions WHERE id=$1`, sid)
-		}
+			tx, err := s.db.BeginTx(ctx, nil)
+			if err != nil {
+				return totalPurged, err
+			}
 
-		if err := tx.Commit(); err != nil {
-			log.Printf("retention commit project %d: %v", p.ID, err)
-			continue
-		}
+			tsCutoff := now.Add(24 * time.Hour)
 
-		totalPurged += len(sessions)
+			if _, err := tx.ExecContext(ctx, `DELETE FROM frames WHERE session_id = ANY($1)`, batch); err != nil {
+				_ = tx.Rollback()
+				log.Printf("retention delete frames project %d: %v", p.ID, err)
+				break
+			}
+			if _, err := tx.ExecContext(ctx, `DELETE FROM items WHERE session_id = ANY($1) AND ts < $2`, batch, tsCutoff); err != nil {
+				_ = tx.Rollback()
+				log.Printf("retention delete items project %d: %v", p.ID, err)
+				break
+			}
+			if _, err := tx.ExecContext(ctx, `DELETE FROM spans WHERE session_id = ANY($1) AND ts < $2`, batch, tsCutoff); err != nil {
+				_ = tx.Rollback()
+				log.Printf("retention delete spans project %d: %v", p.ID, err)
+				break
+			}
+			if _, err := tx.ExecContext(ctx, `DELETE FROM sessions WHERE id = ANY($1)`, batch); err != nil {
+				_ = tx.Rollback()
+				log.Printf("retention delete sessions project %d: %v", p.ID, err)
+				break
+			}
 
-		// Clean up frame files from blob storage
-		for _, sid := range sessions {
-			if err := s.blobs.DeletePrefix(ctx, blob.SessionPrefix(sid)); err != nil {
-				log.Printf("retention frames delete prefix %s: %v", sid, err)
+			if err := tx.Commit(); err != nil {
+				log.Printf("retention commit project %d: %v", p.ID, err)
+				break
+			}
+
+			totalPurged += len(batch)
+
+			// Clean up frame files from blob storage
+			for _, sid := range batch {
+				if err := s.blobs.DeletePrefix(ctx, blob.SessionPrefix(sid)); err != nil {
+					log.Printf("retention frames delete prefix %s: %v", sid, err)
+				}
 			}
 		}
 	}
@@ -117,20 +142,42 @@ func (s *Store) SweepOrphanFrames(ctx context.Context) (int, error) {
 		return 0, nil
 	}
 
-	// Check which sessions actually exist in the database
-	swept := 0
+	allIDs := make([]string, 0, len(sessionIDs))
 	for sid := range sessionIDs {
-		var exists bool
-		err := s.db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM sessions WHERE id=$1)`, sid).Scan(&exists)
+		allIDs = append(allIDs, sid)
+	}
+
+	// Check which sessions actually exist in the database in batches
+	swept := 0
+	const checkBatch = 500
+	for i := 0; i < len(allIDs); i += checkBatch {
+		end := i + checkBatch
+		if end > len(allIDs) {
+			end = len(allIDs)
+		}
+		batch := allIDs[i:end]
+
+		rows, err := s.db.QueryContext(ctx, `SELECT id FROM sessions WHERE id = ANY($1)`, batch)
 		if err != nil {
-			log.Printf("sweep orphans check session %s: %v", sid, err)
+			log.Printf("sweep orphans check batch: %v", err)
 			continue
 		}
-		if !exists {
-			if err := s.blobs.DeletePrefix(ctx, blob.SessionPrefix(sid)); err != nil {
-				log.Printf("sweep orphans delete %s: %v", sid, err)
-			} else {
-				swept++
+		existing := make(map[string]bool, len(batch))
+		for rows.Next() {
+			var id string
+			if err := rows.Scan(&id); err == nil {
+				existing[id] = true
+			}
+		}
+		rows.Close()
+
+		for _, sid := range batch {
+			if !existing[sid] {
+				if err := s.blobs.DeletePrefix(ctx, blob.SessionPrefix(sid)); err != nil {
+					log.Printf("sweep orphans delete %s: %v", sid, err)
+				} else {
+					swept++
+				}
 			}
 		}
 	}

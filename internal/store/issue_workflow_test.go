@@ -8,7 +8,9 @@ package store
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -226,5 +228,84 @@ func TestFingerprintRules(t *testing.T) {
 	rules, _ = st.ListFingerprintRules(proj.ID)
 	if len(rules) != 1 || rules[0].ID != rule2.ID {
 		t.Fatalf("expected rule2 remaining, got %+v", rules)
+	}
+}
+
+func TestMergeIssueCrossProject(t *testing.T) {
+	st, err := Open(Options{
+		DSN:     testdb.DSN(t),
+		DataDir: t.TempDir(),
+	})
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	defer st.Close()
+
+	admin, err := st.CreateUser("owner2@sightpane.local", "Owner", "pass123")
+	if err != nil {
+		t.Fatal(err)
+	}
+	proj1, err := st.CreateProject("Proj 1", "web", "key_p1", &admin.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	proj2, err := st.CreateProject("Proj 2", "web", "key_p2", &admin.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	ingestErr(t, st, proj1.ID, "s1", "TypeError", "cannot read properties of undefined")
+	ingestErr(t, st, proj2.ID, "s2", "TypeError", "cannot read properties of undefined")
+
+	p1Issues, err := st.ListIssues(proj1.ID, false)
+	if err != nil || len(p1Issues) != 1 {
+		t.Fatalf("expected 1 issue in p1, got %d (err: %v)", len(p1Issues), err)
+	}
+	p2Issues, err := st.ListIssues(proj2.ID, false)
+	if err != nil || len(p2Issues) != 1 {
+		t.Fatalf("expected 1 issue in p2, got %d (err: %v)", len(p2Issues), err)
+	}
+
+	err = st.MergeIssue(p1Issues[0].ID, p2Issues[0].ID)
+	if !errors.Is(err, ErrCrossProjectMerge) {
+		t.Fatalf("expected ErrCrossProjectMerge, got %v", err)
+	}
+
+	// Also verify not found
+	err = st.MergeIssue(999999, p2Issues[0].ID)
+	if !errors.Is(err, ErrNotFound) {
+		t.Fatalf("expected ErrNotFound for source, got %v", err)
+	}
+	err = st.MergeIssue(p1Issues[0].ID, 999999)
+	if !errors.Is(err, ErrNotFound) {
+		t.Fatalf("expected ErrNotFound for target, got %v", err)
+	}
+
+	// Ingest a 3rd issue into p1 to test already-merged protection
+	ingestErr(t, st, proj1.ID, "s3", "OtherError", "another error")
+	p1IssuesUpdated, err := st.ListIssues(proj1.ID, false)
+	if err != nil || len(p1IssuesUpdated) != 2 {
+		t.Fatalf("expected 2 issues in p1, got %d", len(p1IssuesUpdated))
+	}
+	issue3ID := p1IssuesUpdated[1].ID
+	if issue3ID == p1Issues[0].ID {
+		issue3ID = p1IssuesUpdated[0].ID
+	}
+
+	// Merge issue3 into p1Issues[0]
+	if err := st.MergeIssue(issue3ID, p1Issues[0].ID); err != nil {
+		t.Fatalf("expected valid merge, got %v", err)
+	}
+
+	// Merging an already merged source issue must fail
+	err = st.MergeIssue(issue3ID, p1Issues[0].ID)
+	if err == nil || !strings.Contains(err.Error(), "already merged") {
+		t.Fatalf("expected error merging already merged source issue, got %v", err)
+	}
+
+	// Merging into an already merged target issue must fail
+	err = st.MergeIssue(p1Issues[0].ID, issue3ID)
+	if err == nil || !strings.Contains(err.Error(), "already merged") {
+		t.Fatalf("expected error merging into already merged target issue, got %v", err)
 	}
 }

@@ -16,6 +16,7 @@ import (
 	"net"
 	"regexp"
 	"strings"
+	"sync"
 	"time"
 
 	"sightpane/internal/blob"
@@ -25,6 +26,24 @@ type ScrubRule struct {
 	Field   string `json:"field"`
 	Regex   string `json:"regex"`
 	Replace string `json:"replace"`
+}
+
+var scrubRegexCache sync.Map // map[string]*regexp.Regexp
+
+func getScrubRegex(pattern string) *regexp.Regexp {
+	if val, ok := scrubRegexCache.Load(pattern); ok {
+		if re, ok := val.(*regexp.Regexp); ok {
+			return re
+		}
+		return nil
+	}
+	re, err := regexp.Compile(pattern)
+	if err != nil {
+		scrubRegexCache.Store(pattern, (*regexp.Regexp)(nil))
+		return nil
+	}
+	scrubRegexCache.Store(pattern, re)
+	return re
 }
 
 func AnonymizeIP(ipStr string) string {
@@ -55,7 +74,7 @@ func ApplyScrubRules(rules []ScrubRule, text string, field string) string {
 		if r.Regex == "" {
 			continue
 		}
-		if re, err := regexp.Compile(r.Regex); err == nil {
+		if re := getScrubRegex(r.Regex); re != nil {
 			text = re.ReplaceAllString(text, r.Replace)
 		}
 	}
@@ -103,14 +122,21 @@ func (s *Store) DeleteUserData(ctx context.Context, projectID int64, userID stri
 	}
 	defer tx.Rollback()
 
-	for _, sid := range sessions {
-		if _, err := tx.ExecContext(ctx, `DELETE FROM frames WHERE session_id=$1`, sid); err != nil {
+	const batchSize = 500
+	for i := 0; i < len(sessions); i += batchSize {
+		end := i + batchSize
+		if end > len(sessions) {
+			end = len(sessions)
+		}
+		batch := sessions[i:end]
+
+		if _, err := tx.ExecContext(ctx, `DELETE FROM frames WHERE session_id = ANY($1)`, batch); err != nil {
 			return err
 		}
-		if _, err := tx.ExecContext(ctx, `DELETE FROM items WHERE project_id=$1 AND session_id=$2`, projectID, sid); err != nil {
+		if _, err := tx.ExecContext(ctx, `DELETE FROM items WHERE project_id=$1 AND session_id = ANY($2)`, projectID, batch); err != nil {
 			return err
 		}
-		if _, err := tx.ExecContext(ctx, `DELETE FROM spans WHERE project_id=$1 AND session_id=$2`, projectID, sid); err != nil {
+		if _, err := tx.ExecContext(ctx, `DELETE FROM spans WHERE project_id=$1 AND session_id = ANY($2)`, projectID, batch); err != nil {
 			return err
 		}
 	}
