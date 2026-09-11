@@ -222,6 +222,15 @@ func New(st *store.Store, notifier *alert.Notifier, uiDir string, embedded fs.FS
 	api.Delete("/projects/:id/feature-flags/:fid", s.requireProject(roleMember), s.deleteFeatureFlag)
 	api.Post("/projects/:id/feature-flags/:fid/test", s.requireProject(roleViewer), s.testFeatureFlag)
 
+	// A/B Testing & Experiments
+	api.Get("/projects/:id/experiments", s.requireProject(roleViewer), s.listExperiments)
+	api.Post("/projects/:id/experiments", s.requireProject(roleMember), s.createExperiment)
+	api.Get("/projects/:id/experiments/:expId", s.requireProject(roleViewer), s.getExperiment)
+	api.Put("/projects/:id/experiments/:expId", s.requireProject(roleMember), s.updateExperiment)
+	api.Delete("/projects/:id/experiments/:expId", s.requireProject(roleMember), s.deleteExperiment)
+	api.Get("/projects/:id/experiments/:expId/results", s.requireProject(roleViewer), s.getExperimentResults)
+	api.Post("/projects/:id/experiments/:expId/winner", s.requireProject(roleMember), s.declareExperimentWinner)
+
 	// The dashboard is last so it never shadows an API route.
 	if s.ui != nil {
 		app.Use("/", s.ui)
