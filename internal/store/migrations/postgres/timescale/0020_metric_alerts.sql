@@ -1,0 +1,2 @@
+-- timescale postgres companion for 0020_metric_alerts.sql
+-- (no additional hypertable needed for rules and incidents)

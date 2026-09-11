@@ -260,6 +260,17 @@ func New(st *store.Store, notifier *alert.Notifier, uiDir string, embedded fs.FS
 	api.Delete("/projects/:id/uptime/:monitorId", s.requireProject(roleMember), s.deleteUptimeMonitor)
 	api.Post("/projects/:id/uptime/:monitorId/check", s.requireProject(roleMember), s.triggerUptimeCheck)
 
+	// Metric Alerts & Anomaly Detection
+	api.Get("/projects/:id/metric-alerts/rules", s.requireProject(roleViewer), s.listMetricAlertRules)
+	api.Post("/projects/:id/metric-alerts/rules", s.requireProject(roleMember), s.createMetricAlertRule)
+	api.Get("/projects/:id/metric-alerts/rules/:ruleId", s.requireProject(roleViewer), s.getMetricAlertRule)
+	api.Put("/projects/:id/metric-alerts/rules/:ruleId", s.requireProject(roleMember), s.updateMetricAlertRule)
+	api.Delete("/projects/:id/metric-alerts/rules/:ruleId", s.requireProject(roleMember), s.deleteMetricAlertRule)
+	api.Get("/projects/:id/metric-alerts/rules/:ruleId/preview", s.requireProject(roleViewer), s.getMetricAlertRulePreview)
+	api.Get("/projects/:id/metric-alerts/preview", s.requireProject(roleViewer), s.getMetricAlertPreview)
+	api.Get("/projects/:id/metric-alerts/incidents", s.requireProject(roleViewer), s.listMetricAlertIncidents)
+	api.Post("/projects/:id/metric-alerts/rules/:ruleId/test", s.requireProject(roleMember), s.testMetricAlertRule)
+
 	// The dashboard is last so it never shadows an API route.
 	if s.ui != nil {
 		app.Use("/", s.ui)

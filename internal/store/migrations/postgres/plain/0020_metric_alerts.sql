@@ -1,0 +1,1 @@
+-- plain postgres companion for 0020_metric_alerts.sql

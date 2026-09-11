@@ -98,6 +98,10 @@ func main() {
 	uptimeRunner.Start()
 	defer uptimeRunner.Stop()
 
+	metricWorker := alert.NewMetricWorker(st, notifier)
+	metricWorker.Start()
+	defer metricWorker.Stop()
+
 	ln, err := net.Listen("tcp", cfg.Addr)
 	if err != nil {
 		log.Fatalf("listen: %v", err)

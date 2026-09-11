@@ -520,4 +520,57 @@ func (n *Notifier) NotifyUptimeIncident(projectID int64, monitorID int64, monito
 	}
 }
 
+// NotifyMetricIncident dispatches metric alert incident triggers and resolutions to configured channels.
+func (n *Notifier) NotifyMetricIncident(rule *store.MetricAlertRule, incident *store.MetricAlertIncident, isResolved bool) {
+	p, _ := n.store.ProjectByID(rule.ProjectID)
+	projName := fmt.Sprintf("Project %d", rule.ProjectID)
+	if p != nil {
+		projName = p.Name
+	}
+	deepLink := fmt.Sprintf("%s/projects/%d/alerts", n.cfg.PublicURL, rule.ProjectID)
+
+	eventKind := "metric_alert_firing"
+	title := fmt.Sprintf("Metric Alert FIRING: %s", rule.Name)
+	summary := incident.Summary
+	if isResolved {
+		eventKind = "metric_alert_resolved"
+		title = fmt.Sprintf("Metric Alert RESOLVED: %s", rule.Name)
+		summary = fmt.Sprintf("Metric returned below threshold (peak value during incident: %.2f). Incident is now resolved.", incident.PeakValue)
+	}
+
+	payload := NotificationPayload{
+		EventKind:   eventKind,
+		ProjectID:   rule.ProjectID,
+		ProjectName: projName,
+		Title:       title,
+		Summary:     summary,
+		URL:         deepLink,
+		LastSeen:    time.Now().UTC().Format(time.RFC3339),
+	}
+
+	var channels []*store.AlertChannel
+	if len(rule.ChannelIDs) > 0 {
+		for _, chID := range rule.ChannelIDs {
+			ch, err := n.store.GetAlertChannel(rule.ProjectID, chID)
+			if err == nil && ch != nil {
+				channels = append(channels, ch)
+			}
+		}
+	} else {
+		chs, err := n.store.ListAlertChannels(rule.ProjectID)
+		if err == nil {
+			for i := range chs {
+				channels = append(channels, &chs[i])
+			}
+		}
+	}
+
+	for _, ch := range channels {
+		cCopy := *ch
+		go func(c store.AlertChannel) {
+			_ = n.sendToChannel(context.Background(), &c, payload)
+		}(cCopy)
+	}
+}
+
 
