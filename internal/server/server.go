@@ -252,6 +252,14 @@ func New(st *store.Store, notifier *alert.Notifier, uiDir string, embedded fs.FS
 	api.Delete("/projects/:id/crons/:monitorId", s.requireProject(roleMember), s.deleteCronMonitor)
 	api.Get("/projects/:id/crons/:monitorId/checkins", s.requireProject(roleViewer), s.listCronCheckins)
 
+	// Uptime & Synthetic Monitoring
+	api.Get("/projects/:id/uptime", s.requireProject(roleViewer), s.listUptimeMonitors)
+	api.Post("/projects/:id/uptime", s.requireProject(roleMember), s.createUptimeMonitor)
+	api.Get("/projects/:id/uptime/:monitorId", s.requireProject(roleViewer), s.getUptimeMonitor)
+	api.Put("/projects/:id/uptime/:monitorId", s.requireProject(roleMember), s.updateUptimeMonitor)
+	api.Delete("/projects/:id/uptime/:monitorId", s.requireProject(roleMember), s.deleteUptimeMonitor)
+	api.Post("/projects/:id/uptime/:monitorId/check", s.requireProject(roleMember), s.triggerUptimeCheck)
+
 	// The dashboard is last so it never shadows an API route.
 	if s.ui != nil {
 		app.Use("/", s.ui)

@@ -1,0 +1,1 @@
+-- plain postgres: no hypertable for uptime_checks

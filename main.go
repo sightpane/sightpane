@@ -41,6 +41,7 @@ import (
 	"sightpane/internal/netx"
 	"sightpane/internal/server"
 	"sightpane/internal/store"
+	"sightpane/internal/uptime"
 )
 
 // shutdownGrace is how long in-flight requests get to finish on SIGTERM. An
@@ -91,6 +92,11 @@ func main() {
 	cronEvaluator := crons.NewEvaluator(st, notifier)
 	cronEvaluator.Start()
 	defer cronEvaluator.Stop()
+
+	uptimeChecker := uptime.NewChecker(20)
+	uptimeRunner := uptime.NewRunner(st, uptimeChecker, notifier)
+	uptimeRunner.Start()
+	defer uptimeRunner.Stop()
 
 	ln, err := net.Listen("tcp", cfg.Addr)
 	if err != nil {
