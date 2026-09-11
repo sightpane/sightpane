@@ -37,6 +37,7 @@ import (
 	"sightpane/internal/alert"
 	"sightpane/internal/blob"
 	"sightpane/internal/config"
+	"sightpane/internal/crons"
 	"sightpane/internal/netx"
 	"sightpane/internal/server"
 	"sightpane/internal/store"
@@ -86,6 +87,10 @@ func main() {
 	notifier := alert.NewNotifier(st, cfg)
 	notifier.Start()
 	defer notifier.Stop()
+
+	cronEvaluator := crons.NewEvaluator(st, notifier)
+	cronEvaluator.Start()
+	defer cronEvaluator.Stop()
 
 	ln, err := net.Listen("tcp", cfg.Addr)
 	if err != nil {

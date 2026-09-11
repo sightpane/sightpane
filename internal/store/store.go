@@ -61,6 +61,10 @@ func (s *Store) Blobs() blob.Store {
 	return s.blobs
 }
 
+func (s *Store) DB() *sql.DB {
+	return s.db
+}
+
 // RecordDroppedQuota tracks rejected items due to project ingest quota exceeded.
 func (s *Store) RecordDroppedQuota(projectID int64, count int) {
 	s.quotaMu.Lock()

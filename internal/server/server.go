@@ -99,6 +99,8 @@ func New(st *store.Store, notifier *alert.Notifier, uiDir string, embedded fs.FS
 	api.Post("/flags/evaluate", s.evaluateFlags)
 	api.Get("/surveys/active", s.activeSurveys)
 	api.Post("/surveys/:surveyId/responses", s.submitSurveyResponse)
+	api.Post("/crons/:slug/checkin", s.cronCheckin)
+	api.Get("/crons/:slug/checkin", s.cronCheckin)
 	api.Get("/health", s.health)
 
 	// Identity.
@@ -241,6 +243,14 @@ func New(st *store.Store, notifier *alert.Notifier, uiDir string, embedded fs.FS
 	api.Delete("/projects/:id/surveys/:surveyId", s.requireProject(roleMember), s.deleteSurvey)
 	api.Get("/projects/:id/surveys/:surveyId/results", s.requireProject(roleViewer), s.getSurveyResults)
 	api.Get("/projects/:id/surveys/:surveyId/responses", s.requireProject(roleViewer), s.listSurveyResponses)
+
+	// Cron Job & Heartbeat Monitoring
+	api.Get("/projects/:id/crons", s.requireProject(roleViewer), s.listCronMonitors)
+	api.Post("/projects/:id/crons", s.requireProject(roleMember), s.createCronMonitor)
+	api.Get("/projects/:id/crons/:monitorId", s.requireProject(roleViewer), s.getCronMonitor)
+	api.Put("/projects/:id/crons/:monitorId", s.requireProject(roleMember), s.updateCronMonitor)
+	api.Delete("/projects/:id/crons/:monitorId", s.requireProject(roleMember), s.deleteCronMonitor)
+	api.Get("/projects/:id/crons/:monitorId/checkins", s.requireProject(roleViewer), s.listCronCheckins)
 
 	// The dashboard is last so it never shadows an API route.
 	if s.ui != nil {

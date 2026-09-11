@@ -450,3 +450,36 @@ func formatAlertText(p NotificationPayload) string {
 	}
 	return b.String()
 }
+
+// NotifyCronIncident dispatches alerts to project alert channels when a cron job misses check-in or times out.
+func (n *Notifier) NotifyCronIncident(projectID int64, monitorSlug, monitorName, incidentKind, message string) {
+	p, _ := n.store.ProjectByID(projectID)
+	projName := fmt.Sprintf("Project %d", projectID)
+	if p != nil {
+		projName = p.Name
+	}
+	deepLink := fmt.Sprintf("%s/projects/%d/crons", n.cfg.PublicURL, projectID)
+
+	payload := NotificationPayload{
+		EventKind:   incidentKind,
+		ProjectID:   projectID,
+		ProjectName: projName,
+		Title:       fmt.Sprintf("Cron Monitor Incident: %s (%s)", monitorName, incidentKind),
+		Summary:     fmt.Sprintf("Cron job %q (%s) triggered an alert: %s", monitorName, monitorSlug, message),
+		URL:         deepLink,
+		LastSeen:    time.Now().UTC().Format(time.RFC3339),
+	}
+
+	channels, err := n.store.ListAlertChannels(projectID)
+	if err != nil {
+		log.Printf("alert notifier: list channels for cron alert (proj %d): %v", projectID, err)
+		return
+	}
+	for _, ch := range channels {
+		cCopy := ch
+		go func(c *store.AlertChannel) {
+			_ = n.sendToChannel(context.Background(), c, payload)
+		}(&cCopy)
+	}
+}
+
