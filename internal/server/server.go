@@ -96,6 +96,7 @@ func New(st *store.Store, notifier *alert.Notifier, uiDir string, embedded fs.FS
 
 	// SDK ingest: authenticated by the project's API key, not a user token.
 	api.Post("/envelope", s.ingest)
+	api.Post("/flags/evaluate", s.evaluateFlags)
 	api.Get("/health", s.health)
 
 	// Identity.
@@ -212,6 +213,14 @@ func New(st *store.Store, notifier *alert.Notifier, uiDir string, embedded fs.FS
 	// User Paths / Flows
 	api.Get("/projects/:id/paths", s.requireProject(roleViewer), s.getPathFlow)
 	api.Get("/projects/:id/paths/sessions", s.requireProject(roleViewer), s.getPathSessions)
+
+	// Feature Flags
+	api.Get("/projects/:id/feature-flags", s.requireProject(roleViewer), s.listFeatureFlags)
+	api.Post("/projects/:id/feature-flags", s.requireProject(roleMember), s.createFeatureFlag)
+	api.Get("/projects/:id/feature-flags/:fid", s.requireProject(roleViewer), s.getFeatureFlag)
+	api.Put("/projects/:id/feature-flags/:fid", s.requireProject(roleMember), s.updateFeatureFlag)
+	api.Delete("/projects/:id/feature-flags/:fid", s.requireProject(roleMember), s.deleteFeatureFlag)
+	api.Post("/projects/:id/feature-flags/:fid/test", s.requireProject(roleViewer), s.testFeatureFlag)
 
 	// The dashboard is last so it never shadows an API route.
 	if s.ui != nil {
