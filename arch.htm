@@ -1,0 +1,460 @@
+<!doctype html>
+<html lang="en">
+
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Architecture Review &mdash; sightpane/sightpane</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script type="module">
+        import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
+        mermaid.initialize({ startOnLoad: true, theme: "neutral", securityLevel: "loose" });
+    </script>
+    <style>
+        .seam {
+            stroke-dasharray: 4 4;
+        }
+
+        .leak {
+            stroke: #dc2626;
+            stroke-width: 2px;
+        }
+
+        .deep-box {
+            background: linear-gradient(135deg, #0f172a, #1e293b);
+            color: #f8fafc;
+        }
+    </style>
+</head>
+
+<body class="bg-stone-50 text-slate-900 font-sans antialiased">
+    <main class="max-w-5xl mx-auto px-6 py-12 space-y-12">
+        <!-- Header -->
+        <header class="border-b border-stone-200 pb-8 flex flex-col md:flex-row md:items-end justify-between gap-6">
+            <div>
+                <span class="text-xs font-mono uppercase tracking-wider text-stone-500">Architecture Review</span>
+                <h1 class="text-3xl font-serif font-bold text-stone-900 tracking-tight mt-1">sightpane/sightpane</h1>
+                <p class="text-sm text-stone-500 mt-1">Evaluated September 12, 2026 &bull; Deepening Opportunities</p>
+            </div>
+            <!-- Legend -->
+            <div
+                class="flex items-center gap-5 text-xs text-stone-600 bg-white border border-stone-200 rounded-lg px-4 py-2.5 shadow-sm">
+                <div class="flex items-center gap-1.5">
+                    <span class="w-3.5 h-3.5 rounded border border-stone-400 bg-stone-100 inline-block"></span>
+                    <span>Module</span>
+                </div>
+                <div class="flex items-center gap-1.5">
+                    <span class="w-4 border-t-2 border-dashed border-stone-500 inline-block"></span>
+                    <span>Seam</span>
+                </div>
+                <div class="flex items-center gap-1.5">
+                    <span class="w-4 border-t-2 border-red-600 inline-block"></span>
+                    <span class="text-red-700 font-medium">Leakage</span>
+                </div>
+                <div class="flex items-center gap-1.5">
+                    <span class="w-3.5 h-3.5 rounded bg-slate-900 inline-block"></span>
+                    <span>Deep Module</span>
+                </div>
+            </div>
+        </header>
+
+        <!-- Candidates Section -->
+        <section id="candidates" class="space-y-12">
+
+            <!-- Candidate 1: Envelope Ingest Pipeline -->
+            <article id="candidate-envelope-intake"
+                class="bg-white border border-stone-200 rounded-xl p-8 shadow-sm space-y-6">
+                <div class="flex flex-wrap items-center justify-between gap-3">
+                    <h2 class="text-xl font-serif font-bold text-stone-900">1. Collapse the Envelope Ingestion Pipeline
+                    </h2>
+                    <div class="flex items-center gap-2">
+                        <span
+                            class="px-2.5 py-0.5 rounded-full text-xs font-semibold bg-emerald-100 text-emerald-800 border border-emerald-200">Strong</span>
+                        <span
+                            class="px-2.5 py-0.5 rounded-full text-xs font-medium bg-stone-100 text-stone-700 border border-stone-200">local-substitutable</span>
+                    </div>
+                </div>
+
+                <div
+                    class="text-xs font-mono text-stone-500 bg-stone-50 p-2.5 rounded border border-stone-200 overflow-x-auto">
+                    internal/server/ingest_handler.go &bull; internal/server/limiter.go &bull; internal/store/ingest.go
+                    &bull; internal/store/privacy.go &bull; internal/store/fingerprint.go
+                </div>
+
+                <!-- Side-by-side diagrams -->
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                    <div class="rounded-lg border border-stone-200 bg-stone-50 p-4 flex flex-col">
+                        <span
+                            class="text-xs font-mono uppercase tracking-wider text-stone-500 mb-2 font-semibold">Before
+                            &mdash; Fragmented & Leaking Intake</span>
+                        <div class="flex-1 flex items-center justify-center min-h-[300px]">
+                            <pre class="mermaid">
+                  flowchart TD
+                    H[ingest_handler] -->|Check token & scopes| S[store.APIToken]
+                    H -->|Item quota check| L[IngestLimiter]
+                    L -.leak quota count.-> ST[store.Store map]
+                    H -->|Raw Envelope| SI[store.Ingest]
+                    SI -->|Decode PNG| B[blob.Store]
+                    SI -->|Query scrub rules| DB1[(Postgres)]
+                    SI -->|Resolve source maps| SYM[symbol.Cache]
+                    SI -->|Check snooze & rules| DB2[(Postgres)]
+                    SI -->|Tx SQL upserts| DB3[(Postgres)]
+                    SI -.leak events.-> N[alert.Notifier]
+                    classDef leak stroke:#dc2626,stroke-width:2px;
+                    class L,ST,SI,N leak;
+                </pre>
+                        </div>
+                    </div>
+                    <div class="rounded-lg border border-stone-200 bg-stone-50 p-4 flex flex-col">
+                        <span class="text-xs font-mono uppercase tracking-wider text-stone-500 mb-2 font-semibold">After
+                            &mdash; Consolidated Deep Intake Module</span>
+                        <div class="flex-1 flex items-center justify-center min-h-[300px]">
+                            <pre class="mermaid">
+                  flowchart TD
+                    H[ingest_handler] -->|Ingest Payload, Auth, IP| DM
+                    subgraph DM["Deep Envelope Intake Module"]
+                      direction TB
+                      V[Token Auth & Quota Guard]
+                      V --> SC[Privacy Scrub & Normalization]
+                      SC --> FR[Frame Blob Offload]
+                      FR --> SY[Symbolicate & Fingerprint]
+                      SY --> TX[Atomic Persistence & Events]
+                    end
+                    DM -.seam.-> B[blob.Store]
+                    DM -.seam.-> DB[(Postgres)]
+                    DM -.seam.-> N[alert.Notifier]
+                    style DM fill:#0f172a,stroke:#334155,stroke-width:2px,color:#f8fafc;
+                </pre>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="space-y-3 text-sm">
+                    <p><strong class="font-semibold text-stone-900">Problem:</strong> Ingestion logic leaks across HTTP
+                        handlers, in-memory rate-limiting maps, SQL privacy rule queries, frame blob writes, and a
+                        550-line transactional item loop.</p>
+                    <p><strong class="font-semibold text-stone-900">Solution:</strong> Collapse authentication
+                        resolution, quota enforcement, payload normalization, privacy scrubbing, frame persistence, and
+                        transactional insertion behind one deep intake module.</p>
+                    <div>
+                        <strong class="font-semibold text-stone-900 block mb-1">Wins:</strong>
+                        <ul class="grid grid-cols-1 md:grid-cols-2 gap-2 text-stone-700">
+                            <li class="flex items-center gap-2">&bull; Locality: envelope lifecycle in one module</li>
+                            <li class="flex items-center gap-2">&bull; Leverage: one interface handles all ingest</li>
+                            <li class="flex items-center gap-2">&bull; Tests hit intake without HTTP routing</li>
+                            <li class="flex items-center gap-2">&bull; Quota state stays inside module</li>
+                            <li class="flex items-center gap-2">&bull; Deletes redundant multi-pass JSON parsing</li>
+                            <li class="flex items-center gap-2">&bull; Seam shields handlers from storage transactions
+                            </li>
+                        </ul>
+                    </div>
+                </div>
+            </article>
+
+            <!-- Candidate 2: Background Health Scheduler -->
+            <article id="candidate-health-scheduler"
+                class="bg-white border border-stone-200 rounded-xl p-8 shadow-sm space-y-6">
+                <div class="flex flex-wrap items-center justify-between gap-3">
+                    <h2 class="text-xl font-serif font-bold text-stone-900">2. Consolidate the Background Monitor &
+                        Incident Loop</h2>
+                    <div class="flex items-center gap-2">
+                        <span
+                            class="px-2.5 py-0.5 rounded-full text-xs font-semibold bg-emerald-100 text-emerald-800 border border-emerald-200">Strong</span>
+                        <span
+                            class="px-2.5 py-0.5 rounded-full text-xs font-medium bg-stone-100 text-stone-700 border border-stone-200">local-substitutable</span>
+                    </div>
+                </div>
+
+                <div
+                    class="text-xs font-mono text-stone-500 bg-stone-50 p-2.5 rounded border border-stone-200 overflow-x-auto">
+                    internal/crons/evaluator.go &bull; internal/uptime/runner.go &bull; internal/alert/metric_worker.go
+                    &bull; internal/store/retention.go &bull; main.go
+                </div>
+
+                <!-- Side-by-side diagrams -->
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                    <div class="rounded-lg border border-stone-200 bg-stone-50 p-4 flex flex-col">
+                        <span
+                            class="text-xs font-mono uppercase tracking-wider text-stone-500 mb-2 font-semibold">Before
+                            &mdash; Four Shallow Ticker Loops</span>
+                        <div class="flex-1 flex items-center justify-center min-h-[300px]">
+                            <pre class="mermaid">
+                  flowchart TD
+                    M[main.go] -->|Start / Stop| C[crons.Evaluator]
+                    M -->|Start / Stop| U[uptime.Runner]
+                    M -->|Start / Stop| W[alert.MetricWorker]
+                    M -.orphaned never called.-> R[store.PurgeExpired]
+                    C -->|Ticker loop| ST1[store.EvaluateCronDeadlines]
+                    U -->|Ticker loop| ST2[store.GetMonitorsDue]
+                    W -->|Ticker loop| ST3[store.ListActiveRules]
+                    C -.leak.-> N[alert.Notifier]
+                    U -.leak.-> N
+                    W -.leak.-> N
+                    classDef leak stroke:#dc2626,stroke-width:2px;
+                    class C,U,W,R leak;
+                </pre>
+                        </div>
+                    </div>
+                    <div class="rounded-lg border border-stone-200 bg-stone-50 p-4 flex flex-col">
+                        <span class="text-xs font-mono uppercase tracking-wider text-stone-500 mb-2 font-semibold">After
+                            &mdash; Unified Deep Health Engine</span>
+                        <div class="flex-1 flex items-center justify-center min-h-[300px]">
+                            <pre class="mermaid">
+                  flowchart TD
+                    M[main.go] -->|Start / Stop / Trigger| HE
+                    subgraph HE["Deep Health Engine"]
+                      direction TB
+                      SC[Unified Cycle Coordinator]
+                      SC --> CR[Cron Deadline Task]
+                      SC --> UP[Uptime Synthetic Check]
+                      SC --> MA[Metric Anomaly Detector]
+                      SC --> RT[Retention Frame Sweeper]
+                    end
+                    HE -.seam.-> ST[(Database Handle)]
+                    HE -.seam.-> N[alert.Notifier]
+                    style HE fill:#0f172a,stroke:#334155,stroke-width:2px,color:#f8fafc;
+                </pre>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="space-y-3 text-sm">
+                    <p><strong class="font-semibold text-stone-900">Problem:</strong> Three shallow runner modules
+                        copy-paste identical ticker-and-stop boilerplate to poll store methods, while retention purging
+                        is completely orphaned with no background execution.</p>
+                    <p><strong class="font-semibold text-stone-900">Solution:</strong> Consolidate periodic deadline
+                        evaluation, uptime checks, metric anomalies, and retention sweeps behind a single deep health
+                        scheduler module with a unified lifecycle interface.</p>
+                    <div>
+                        <strong class="font-semibold text-stone-900 block mb-1">Wins:</strong>
+                        <ul class="grid grid-cols-1 md:grid-cols-2 gap-2 text-stone-700">
+                            <li class="flex items-center gap-2">&bull; Locality: goroutine lifecycle in one place</li>
+                            <li class="flex items-center gap-2">&bull; Deletes three shallow ticker wrappers</li>
+                            <li class="flex items-center gap-2">&bull; Retention purging gains background execution</li>
+                            <li class="flex items-center gap-2">&bull; Tests verify scheduling without mock channels
+                            </li>
+                            <li class="flex items-center gap-2">&bull; Interface shrinks to Start and Stop</li>
+                            <li class="flex items-center gap-2">&bull; Seam isolates incident dispatch from loops</li>
+                        </ul>
+                    </div>
+                </div>
+            </article>
+
+            <!-- Candidate 3: Product Analytics Calculation Engine -->
+            <article id="candidate-analytics-engine"
+                class="bg-white border border-stone-200 rounded-xl p-8 shadow-sm space-y-6">
+                <div class="flex flex-wrap items-center justify-between gap-3">
+                    <h2 class="text-xl font-serif font-bold text-stone-900">3. Deepen the Product Analytics Engine</h2>
+                    <div class="flex items-center gap-2">
+                        <span
+                            class="px-2.5 py-0.5 rounded-full text-xs font-semibold bg-amber-100 text-amber-800 border border-amber-200">Worth
+                            exploring</span>
+                        <span
+                            class="px-2.5 py-0.5 rounded-full text-xs font-medium bg-stone-100 text-stone-700 border border-stone-200">in-process</span>
+                    </div>
+                </div>
+
+                <div
+                    class="text-xs font-mono text-stone-500 bg-stone-50 p-2.5 rounded border border-stone-200 overflow-x-auto">
+                    internal/store/experiments.go &bull; internal/store/funnels.go &bull; internal/store/cohorts.go
+                    &bull; internal/store/retention_matrix.go &bull; internal/store/paths.go
+                </div>
+
+                <!-- Side-by-side diagrams: Cross-section / Mass comparison -->
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                    <div class="rounded-lg border border-stone-200 bg-stone-50 p-4 flex flex-col">
+                        <span
+                            class="text-xs font-mono uppercase tracking-wider text-stone-500 mb-2 font-semibold">Before
+                            &mdash; Store Monolith Mass</span>
+                        <div class="flex-1 flex flex-col justify-center space-y-3 py-4">
+                            <div class="border border-stone-300 rounded bg-white p-3">
+                                <div class="text-xs font-bold text-stone-700 mb-1">store.Store Interface (201 methods)
+                                </div>
+                                <div
+                                    class="h-6 bg-red-100 border border-red-300 rounded flex items-center px-2 text-xs text-red-800 font-mono">
+                                    Large Interface: SQL + Business Logic + Statistical Math
+                                </div>
+                            </div>
+                            <div class="border border-red-300 rounded bg-red-50 p-3 space-y-2">
+                                <div class="text-xs font-bold text-red-900">Implementation: Entangled Memory Scans &
+                                    Math</div>
+                                <div
+                                    class="text-xs font-mono text-stone-600 bg-white p-2 rounded border border-stone-200">
+                                    &bull; SQL query loads all events into memory slice<br />
+                                    &bull; Two-proportion z-test & Normal CDF<br />
+                                    &bull; Funnel sequence state-machine tracking<br />
+                                    &bull; Cohort retention matrix day bucketing
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="rounded-lg border border-stone-200 bg-stone-50 p-4 flex flex-col">
+                        <span class="text-xs font-mono uppercase tracking-wider text-stone-500 mb-2 font-semibold">After
+                            &mdash; Deep Analytics Engine</span>
+                        <div class="flex-1 flex flex-col justify-center space-y-3 py-4">
+                            <div class="border border-slate-700 rounded bg-slate-900 text-white p-3">
+                                <div class="text-xs font-bold text-slate-200 mb-1">Small Interface (AnalyticsEngine)
+                                </div>
+                                <div
+                                    class="h-6 bg-slate-800 rounded flex items-center px-2 text-xs text-emerald-400 font-mono">
+                                    ComputeExperiment(exp, events) &bull; ComputeFunnel(steps, events)
+                                </div>
+                            </div>
+                            <div class="deep-box rounded p-3 space-y-2 border border-slate-700">
+                                <div class="text-xs font-bold text-slate-200">Deep In-Process Implementation</div>
+                                <div
+                                    class="text-xs font-mono text-slate-300 bg-slate-800/80 p-2 rounded border border-slate-700">
+                                    &bull; Statistical distributions & sample power<br />
+                                    &bull; Multi-step drop-off graph traversal<br />
+                                    &bull; Zero database dependency in unit tests<br />
+                                    &bull; Adapters: in-memory for tests, query for prod
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="space-y-3 text-sm">
+                    <p><strong class="font-semibold text-stone-900">Problem:</strong> Statistical formulas, z-score
+                        math, and funnel state-machine traversals are coupled directly to raw SQL cursors inside the
+                        persistence store.</p>
+                    <p><strong class="font-semibold text-stone-900">Solution:</strong> Extract a deep analytics
+                        computation module that processes event sequences and mathematical distributions across an
+                        in-memory or database-query provider seam.</p>
+                    <div>
+                        <strong class="font-semibold text-stone-900 block mb-1">Wins:</strong>
+                        <ul class="grid grid-cols-1 md:grid-cols-2 gap-2 text-stone-700">
+                            <li class="flex items-center gap-2">&bull; Locality: statistical formulas in one module</li>
+                            <li class="flex items-center gap-2">&bull; Tests exercise math without database container
+                            </li>
+                            <li class="flex items-center gap-2">&bull; Seam separates query from computation</li>
+                            <li class="flex items-center gap-2">&bull; Two adapters: in-memory and database</li>
+                            <li class="flex items-center gap-2">&bull; Store interface drops 25 calculation methods</li>
+                            <li class="flex items-center gap-2">&bull; Eliminates full-table in-memory event scans</li>
+                        </ul>
+                    </div>
+                </div>
+            </article>
+
+            <!-- Candidate 4: Tenant & Scope Access Verification -->
+            <article id="candidate-tenant-access"
+                class="bg-white border border-stone-200 rounded-xl p-8 shadow-sm space-y-6">
+                <div class="flex flex-wrap items-center justify-between gap-3">
+                    <h2 class="text-xl font-serif font-bold text-stone-900">4. Unify Tenant & Resource Access
+                        Verification</h2>
+                    <div class="flex items-center gap-2">
+                        <span
+                            class="px-2.5 py-0.5 rounded-full text-xs font-semibold bg-amber-100 text-amber-800 border border-amber-200">Worth
+                            exploring</span>
+                        <span
+                            class="px-2.5 py-0.5 rounded-full text-xs font-medium bg-stone-100 text-stone-700 border border-stone-200">local-substitutable</span>
+                    </div>
+                </div>
+
+                <div
+                    class="text-xs font-mono text-stone-500 bg-stone-50 p-2.5 rounded border border-stone-200 overflow-x-auto">
+                    internal/server/server.go &bull; internal/server/data_handler.go &bull;
+                    internal/server/org_handler.go &bull; internal/server/project_handler.go
+                </div>
+
+                <!-- Side-by-side diagrams -->
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                    <div class="rounded-lg border border-stone-200 bg-stone-50 p-4 flex flex-col">
+                        <span
+                            class="text-xs font-mono uppercase tracking-wider text-stone-500 mb-2 font-semibold">Before
+                            &mdash; Ad-hoc Handler Isolation</span>
+                        <div class="flex-1 flex items-center justify-center min-h-[300px]">
+                            <pre class="mermaid">
+                  flowchart TD
+                    R1["GET /projects/:id/..."] -->|requireProject| H1[Project Handlers]
+                    R2["GET /sessions/:id"] -->|requireAuth only| H2[getSession]
+                    R3["GET /issues/:id"] -->|requireAuth only| H3[getIssue]
+                    H2 -.manual call.-> SA[s.sessionAllowed]
+                    H3 -.manual call.-> IA[s.issueAllowed]
+                    SA -.extra SQL query.-> DB[(Postgres)]
+                    IA -.extra SQL query.-> DB
+                    classDef leak stroke:#dc2626,stroke-width:2px;
+                    class R2,R3,SA,IA leak;
+                </pre>
+                        </div>
+                    </div>
+                    <div class="rounded-lg border border-stone-200 bg-stone-50 p-4 flex flex-col">
+                        <span class="text-xs font-mono uppercase tracking-wider text-stone-500 mb-2 font-semibold">After
+                            &mdash; Unified Tenancy Seam</span>
+                        <div class="flex-1 flex items-center justify-center min-h-[300px]">
+                            <pre class="mermaid">
+                  flowchart TD
+                    R["All API Routes"] --> ATS
+                    subgraph ATS["Deep Access Guard Module"]
+                      direction TB
+                      TK[Token / Session Resolver]
+                      TK --> RS[Resource Tenancy Resolver]
+                      RS --> RC[Role & Permission Verifier]
+                      RC --> CTX[Inject Verified Context]
+                    end
+                    ATS --> H[Clean Leaf Handlers]
+                    ATS -.seam.-> DB[(Postgres)]
+                    style ATS fill:#0f172a,stroke:#334155,stroke-width:2px,color:#f8fafc;
+                </pre>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="space-y-3 text-sm">
+                    <p><strong class="font-semibold text-stone-900">Problem:</strong> Authorization is fragmented across
+                        route middleware and ad-hoc per-handler checks like sessionAllowed and issueAllowed, risking
+                        tenant-isolation leakage if a handler omits the check.</p>
+                    <p><strong class="font-semibold text-stone-900">Solution:</strong> Enforce tenant and entity scoping
+                        through a deep access control module at the routing seam that resolves resource tenancy before
+                        handlers execute.</p>
+                    <div>
+                        <strong class="font-semibold text-stone-900 block mb-1">Wins:</strong>
+                        <ul class="grid grid-cols-1 md:grid-cols-2 gap-2 text-stone-700">
+                            <li class="flex items-center gap-2">&bull; Locality: tenant isolation in one seam</li>
+                            <li class="flex items-center gap-2">&bull; Prevents security regressions from missed checks
+                            </li>
+                            <li class="flex items-center gap-2">&bull; Handlers receive verified scoped contexts</li>
+                            <li class="flex items-center gap-2">&bull; Eliminates duplicate database lookups in handlers
+                            </li>
+                            <li class="flex items-center gap-2">&bull; Interface is uniform across all resources</li>
+                            <li class="flex items-center gap-2">&bull; Tests verify tenancy through single seam</li>
+                        </ul>
+                    </div>
+                </div>
+            </article>
+
+        </section>
+
+        <!-- Top Recommendation Section -->
+        <section id="top-recommendation"
+            class="bg-gradient-to-br from-slate-900 to-slate-800 text-white rounded-xl p-8 shadow-md space-y-4">
+            <div class="flex items-center gap-2">
+                <span
+                    class="px-2.5 py-0.5 rounded-full text-xs font-semibold bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">Top
+                    Recommendation</span>
+            </div>
+            <h3 class="text-2xl font-serif font-bold text-white tracking-tight">
+                <a href="#candidate-envelope-intake" class="hover:underline">Collapse the Envelope Ingestion
+                    Pipeline</a>
+            </h3>
+            <p class="text-slate-300 leading-relaxed max-w-3xl text-sm">
+                Every error, event, breadcrumb, and frame entering Sightpane crosses this seam; consolidating
+                authentication, quota, normalization, and persistence eliminates the greatest source of developer
+                friction and provides immediate leverage for testing the hot data path without spinning up the HTTP
+                server.
+            </p>
+            <div class="pt-2">
+                <a href="#candidate-envelope-intake"
+                    class="inline-flex items-center gap-1.5 text-xs font-mono uppercase tracking-wider text-emerald-400 hover:text-emerald-300">
+                    &darr; View Candidate Details
+                </a>
+            </div>
+        </section>
+
+        <footer class="border-t border-stone-200 pt-6 text-center text-xs text-stone-400 font-mono">
+            Generated by improve-codebase-architecture &bull; Vocabulary: codebase-design
+        </footer>
+    </main>
+</body>
+
+</html>
