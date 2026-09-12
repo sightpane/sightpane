@@ -35,7 +35,7 @@ func TestTimescaleSchema(t *testing.T) {
 
 	var chunkInterval string
 	if err := st.db.QueryRow(`SELECT time_interval::text FROM timescaledb_information.dimensions
-		WHERE hypertable_name='items' AND column_name='ts'`).Scan(&chunkInterval); err != nil {
+		WHERE hypertable_schema = current_schema() AND hypertable_name='items' AND column_name='ts'`).Scan(&chunkInterval); err != nil {
 		t.Fatalf("items is not a hypertable partitioned on ts: %v", err)
 	}
 	if chunkInterval != "1 day" {
@@ -44,7 +44,7 @@ func TestTimescaleSchema(t *testing.T) {
 
 	var realtime bool
 	if err := st.db.QueryRow(`SELECT NOT materialized_only FROM timescaledb_information.continuous_aggregates
-		WHERE view_name='items_daily'`).Scan(&realtime); err != nil {
+		WHERE view_schema = current_schema() AND view_name='items_daily'`).Scan(&realtime); err != nil {
 		t.Fatalf("items_daily is not a continuous aggregate: %v", err)
 	}
 	// Without real-time aggregation the chart would not show what was ingested
@@ -55,7 +55,7 @@ func TestTimescaleSchema(t *testing.T) {
 
 	var drop string
 	if err := st.db.QueryRow(`SELECT config->>'drop_after' FROM timescaledb_information.jobs
-		WHERE proc_name='policy_retention' AND hypertable_name='items'`).Scan(&drop); err != nil {
+		WHERE proc_name='policy_retention' AND hypertable_schema = current_schema() AND hypertable_name='items'`).Scan(&drop); err != nil {
 		t.Fatalf("no retention policy on items: %v", err)
 	}
 	if drop != "90 days" {
@@ -73,7 +73,7 @@ func TestRetentionZeroRemovesThePolicy(t *testing.T) {
 	}
 	var n int
 	if err := st.db.QueryRow(`SELECT COUNT(*) FROM timescaledb_information.jobs
-		WHERE proc_name='policy_retention' AND hypertable_name='items'`).Scan(&n); err != nil {
+		WHERE proc_name='policy_retention' AND hypertable_schema = current_schema() AND hypertable_name='items'`).Scan(&n); err != nil {
 		t.Fatal(err)
 	}
 	if n != 0 {
