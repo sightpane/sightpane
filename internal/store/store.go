@@ -15,6 +15,7 @@
 package store
 
 import (
+	"context"
 	"crypto/rand"
 	"database/sql"
 	"encoding/base64"
@@ -25,6 +26,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"time"
 
 	"sightpane/internal/apierr"
 	"sightpane/internal/blob"
@@ -189,6 +191,26 @@ func (s *Store) connect(dsn string) error {
 	// time here, which is the point of not being on a single-writer database.
 	db.SetMaxOpenConns(16)
 	db.SetMaxIdleConns(4)
+
+	// Wait for the database to become reachable. On first run under container
+	// orchestration (or when TimescaleDB restarts itself after tuning), the
+	// port can momentarily refuse connections.
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	var pingErr error
+	for {
+		if pingErr = db.PingContext(ctx); pingErr == nil {
+			break
+		}
+		select {
+		case <-ctx.Done():
+			db.Close()
+			stdlib.UnregisterConnConfig(name)
+			return fmt.Errorf("database unreachable: %w (last error: %v)", ctx.Err(), pingErr)
+		case <-time.After(250 * time.Millisecond):
+		}
+	}
+
 	s.db, s.connName = db, name
 	s.timescale = enableTimescale(db)
 	return nil

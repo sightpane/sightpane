@@ -96,7 +96,9 @@ jobs:
             -e POSTGRES_USER=sightpane -e POSTGRES_PASSWORD=sightpane -e POSTGRES_DB=sightpane \
             timescale/timescaledb:2.30.0-pg17
           for _ in $(seq 1 60); do
-            docker exec sp-db pg_isready -U sightpane -d sightpane -q && break
+            docker exec sp-db pg_isready -U sightpane -d sightpane -q && \
+            docker exec sp-db psql -U sightpane -d sightpane -tAc \
+              "SELECT 1 FROM pg_extension WHERE extname='timescaledb'" 2>/dev/null | grep -qx 1 && break
             sleep 1
           done
           docker run -d --name sp-app --network sp-ci -p 8790:8790 \
