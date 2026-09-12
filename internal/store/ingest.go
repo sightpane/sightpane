@@ -217,16 +217,19 @@ func (s *Store) Ingest(ctx context.Context, projectID int64, env *Envelope, ip s
 	}
 	defer tx.Rollback()
 
-	_, err = tx.Exec(`INSERT INTO sessions(id, project_id, started_at, last_seen_at, user_id, user_json, device_json, props_json, platform, release, ip, browser, visitor_key, current_route, sdk_name, sdk_version)
-		VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)
+	_, err = tx.Exec(`INSERT INTO sessions(id, project_id, started_at, last_seen_at, user_id, user_json, device_json, props_json, platform, release, ip, browser, visitor_key, current_route, sdk_name, sdk_version, app_type, os, os_version)
+		VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19)
 		ON CONFLICT(id) DO UPDATE SET last_seen_at=excluded.last_seen_at, user_id=excluded.user_id, user_json=excluded.user_json,
 		  device_json=excluded.device_json, props_json=excluded.props_json, platform=excluded.platform, release=excluded.release,
-		  ip=CASE WHEN $17='none' THEN '' WHEN excluded.ip='' THEN sessions.ip ELSE excluded.ip END,
+		  ip=CASE WHEN $20='none' THEN '' WHEN excluded.ip='' THEN sessions.ip ELSE excluded.ip END,
 		  browser=excluded.browser, visitor_key=excluded.visitor_key,
 		  current_route=CASE WHEN excluded.current_route='' THEN sessions.current_route ELSE excluded.current_route END,
 		  sdk_name=CASE WHEN excluded.sdk_name!='' THEN excluded.sdk_name ELSE sessions.sdk_name END,
-		  sdk_version=CASE WHEN excluded.sdk_version!='' THEN excluded.sdk_version ELSE sessions.sdk_version END`,
-		env.Session.ID, projectID, started, now, userID, userJSON, deviceJSON, propsJSON, d.Platform, d.Release, ip, browser, visitor, route, env.SDK.Name, env.SDK.Version, storeIP)
+		  sdk_version=CASE WHEN excluded.sdk_version!='' THEN excluded.sdk_version ELSE sessions.sdk_version END,
+		  app_type=CASE WHEN excluded.app_type!='' THEN excluded.app_type ELSE sessions.app_type END,
+		  os=CASE WHEN excluded.os!='' THEN excluded.os ELSE sessions.os END,
+		  os_version=CASE WHEN excluded.os_version!='' THEN excluded.os_version ELSE sessions.os_version END`,
+		env.Session.ID, projectID, started, now, userID, userJSON, deviceJSON, propsJSON, d.Platform, d.Release, ip, browser, visitor, route, env.SDK.Name, env.SDK.Version, d.AppType, d.OS, d.OSVersion, storeIP)
 	if err != nil {
 		return nil, err
 	}

@@ -28,6 +28,7 @@ var (
 type ParsedDevice struct {
 	Platform         string
 	PlatformCategory string
+	AppType          string
 	Release          string
 	Browser          string
 	BrowserVersion   string
@@ -56,6 +57,7 @@ func EnrichDeviceJSON(raw string) (string, ParsedDevice) {
 
 	platform := getStr("platform")
 	category := getStr("platform_category")
+	appType := getStr("app_type")
 	release := getStr("release")
 	browser := getStr("browser")
 	browserVer := getStr("browser_version")
@@ -84,6 +86,20 @@ func EnrichDeviceJSON(raw string) (string, ParsedDevice) {
 			category = "desktop"
 		}
 		m["platform_category"] = category
+	}
+
+	// Deduce app_type (browser, desktop, mobile) if empty
+	if appType == "" {
+		pLower := strings.ToLower(platform)
+		switch {
+		case pLower == "web" || category == "web":
+			appType = "browser"
+		case pLower == "android" || pLower == "ios" || pLower == "fuchsia" || category == "mobile":
+			appType = "mobile"
+		default:
+			appType = "desktop"
+		}
+		m["app_type"] = appType
 	}
 
 	// Browser name & version parsing from UA if missing
@@ -202,6 +218,7 @@ func EnrichDeviceJSON(raw string) (string, ParsedDevice) {
 	return resJSON, ParsedDevice{
 		Platform:         platform,
 		PlatformCategory: category,
+		AppType:          appType,
 		Release:          release,
 		Browser:          browser,
 		BrowserVersion:   browserVer,

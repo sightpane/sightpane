@@ -476,7 +476,8 @@ func TestVisitorsAndLive(t *testing.T) {
 		{"", "Mozilla/5.0 ... Chrome/128 Safari/537", "web", "web", "Chrome"},
 		{"", "Mozilla/5.0 ... Firefox/130", "web", "web", "Firefox"},
 		{"web", "", "web", "web", ""},
-		{"", "", "linux", "linux", "linux"},
+		{"", "", "linux", "linux", ""},
+		{"linux app", "", "linux", "linux", "linux app"},
 	} {
 		if got := store.BrowserLabel(c.b, c.ua, c.p, c.os); got != c.want {
 			t.Fatalf("store.BrowserLabel(%q,%q,%q,%q)=%q want %q", c.b, c.ua, c.p, c.os, got, c.want)

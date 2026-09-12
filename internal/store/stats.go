@@ -37,6 +37,8 @@ type ProjectStats struct {
 	CrashFree  float64     `json:"crash_free"` // share of sessions with no error, 0–1
 	Daily      []DayStat   `json:"daily"`
 	Platforms  []NameCount `json:"platforms"`
+	AppTypes   []NameCount `json:"app_types"`
+	OSs        []NameCount `json:"operating_systems"`
 	Releases   []NameCount `json:"releases"`
 	TopIssues  []Issue     `json:"top_issues"`
 	TopEvents  []NameCount `json:"top_events"`
@@ -51,7 +53,16 @@ func (s *Store) Stats(projectID int64, days int) (*ProjectStats, error) {
 	}
 	now := time.Now().UTC()
 	since := now.AddDate(0, 0, -(days - 1)).Truncate(24 * time.Hour)
-	st := &ProjectStats{Days: days, Dropped: s.DroppedQuota(projectID), Platforms: []NameCount{}, Releases: []NameCount{}, TopIssues: []Issue{}, TopEvents: []NameCount{}}
+	st := &ProjectStats{
+		Days:       days,
+		Dropped:    s.DroppedQuota(projectID),
+		Platforms:  []NameCount{},
+		AppTypes:   []NameCount{},
+		OSs:        []NameCount{},
+		Releases:   []NameCount{},
+		TopIssues:  []Issue{},
+		TopEvents:  []NameCount{},
+	}
 	// Every query below takes the same two parameters in the same order, which
 	// is what lets fill and nameCounts stay one-liners.
 	from := since
@@ -134,6 +145,12 @@ func (s *Store) Stats(projectID int64, days int) (*ProjectStats, error) {
 	}
 	var err error
 	if st.Platforms, err = nameCounts(`SELECT COALESCE(NULLIF(platform,''),'?'), COUNT(*) FROM sessions WHERE project_id=$1 AND started_at>=$2 GROUP BY 1 ORDER BY 2 DESC`); err != nil {
+		return nil, err
+	}
+	if st.AppTypes, err = nameCounts(`SELECT COALESCE(NULLIF(app_type,''),'?'), COUNT(*) FROM sessions WHERE project_id=$1 AND started_at>=$2 GROUP BY 1 ORDER BY 2 DESC`); err != nil {
+		return nil, err
+	}
+	if st.OSs, err = nameCounts(`SELECT COALESCE(NULLIF(os,''),'?'), COUNT(*) FROM sessions WHERE project_id=$1 AND started_at>=$2 GROUP BY 1 ORDER BY 2 DESC LIMIT 8`); err != nil {
 		return nil, err
 	}
 	if st.Releases, err = nameCounts(`SELECT COALESCE(NULLIF(release,''),'?'), COUNT(*) FROM sessions WHERE project_id=$1 AND started_at>=$2 GROUP BY 1 ORDER BY 2 DESC LIMIT 8`); err != nil {

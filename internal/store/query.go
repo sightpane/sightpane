@@ -44,6 +44,9 @@ type Session struct {
 	Route      string          `json:"current_route"`
 	SDKName    string          `json:"sdk_name"`
 	SDKVersion string          `json:"sdk_version"`
+	AppType    string          `json:"app_type"`
+	OS         string          `json:"os"`
+	OSVersion  string          `json:"os_version"`
 }
 
 type SessionFilter struct {
@@ -55,12 +58,12 @@ type SessionFilter struct {
 	Cursor     string
 }
 
-const sessionCols = `id, project_id, started_at, last_seen_at, ended_at, user_id, user_json, device_json, props_json, platform, release, error_count, event_count, frame_count, ip, browser, visitor_key, current_route, sdk_name, sdk_version`
+const sessionCols = `id, project_id, started_at, last_seen_at, ended_at, user_id, user_json, device_json, props_json, platform, release, error_count, event_count, frame_count, ip, browser, visitor_key, current_route, sdk_name, sdk_version, app_type, os, os_version`
 
 func scanSession(sc interface{ Scan(...any) error }) (*Session, error) {
 	var s Session
 	var user, device, props string
-	if err := sc.Scan(&s.ID, &s.ProjectID, tsCol{&s.StartedAt}, tsCol{&s.LastSeenAt}, nullTSCol{&s.EndedAt}, &s.UserID, &user, &device, &props, &s.Platform, &s.Release, &s.ErrorCount, &s.EventCount, &s.FrameCount, &s.IP, &s.Browser, &s.VisitorKey, &s.Route, &s.SDKName, &s.SDKVersion); err != nil {
+	if err := sc.Scan(&s.ID, &s.ProjectID, tsCol{&s.StartedAt}, tsCol{&s.LastSeenAt}, nullTSCol{&s.EndedAt}, &s.UserID, &user, &device, &props, &s.Platform, &s.Release, &s.ErrorCount, &s.EventCount, &s.FrameCount, &s.IP, &s.Browser, &s.VisitorKey, &s.Route, &s.SDKName, &s.SDKVersion, &s.AppType, &s.OS, &s.OSVersion); err != nil {
 		return nil, err
 	}
 	s.User, s.Device, s.Props = json.RawMessage(user), json.RawMessage(device), json.RawMessage(props)
@@ -559,19 +562,14 @@ func (s *Store) Live(projectID int64, window int) (*LiveStatus, error) {
 }
 
 // BrowserLabel is what the dashboard shows next to a session: the browser name
-// the SDK reported, or one derived from the user agent when it did not, or the
-// operating system on platforms that are not the web. On the web with nothing to
-// go on it stays empty rather than repeating the platform, which would read as
-// "web · web".
+// the SDK reported, or one derived from the user agent when it did not. On native
+// platforms or on the web with nothing to go on, it stays empty.
 func BrowserLabel(browser, ua, platform, os string) string {
 	if browser != "" && browser != platform && browser != os {
 		return browser
 	}
 	if ua != "" {
 		return browserFromUA(ua)
-	}
-	if platform != "web" && os != "" && os != "web" {
-		return os
 	}
 	return ""
 }

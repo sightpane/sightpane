@@ -297,7 +297,7 @@ func (s *Store) DeleteInsight(projectID int64, id string) error {
 func (s *Store) ExecuteInsightQuery(ctx context.Context, projectID int64, q InsightQuery) (*InsightQueryResult, error) {
 	// Build cache key
 	qBytes, _ := json.Marshal(q)
-	h := sha256.Sum256(append([]byte(fmt.Sprintf("p:%d:", projectID)), qBytes...))
+	h := sha256.Sum256(append(fmt.Appendf(nil, "p:%d:", projectID), qBytes...))
 	cacheKey := hex.EncodeToString(h[:])
 
 	if cached, ok := globalInsightCache.get(cacheKey); ok {
