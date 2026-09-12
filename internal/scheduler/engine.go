@@ -126,16 +126,21 @@ func (e *Engine) executeMaintenance() {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 	defer cancel()
 
-	// 1. Retention cleanup
-	if e.retentionDays > 0 {
-		if n, err := e.store.PurgeExpired(ctx, e.retentionDays); err != nil {
-			log.Printf("scheduler: retention cleanup failed: %v", err)
-		} else if n > 0 {
-			log.Printf("scheduler: purged %d expired sessions", n)
-		}
+	// 1. Retention cleanup (PurgeExpired handles both project-specific and default retention periods)
+	if n, err := e.store.PurgeExpired(ctx, e.retentionDays); err != nil {
+		log.Printf("scheduler: retention cleanup failed: %v", err)
+	} else if n > 0 {
+		log.Printf("scheduler: purged %d expired sessions", n)
 	}
 
-	// 2. Check and apply daily GeoIP database updates
+	// 2. Orphan frame cleanup in blob storage
+	if swept, err := e.store.SweepOrphanFrames(ctx); err != nil {
+		log.Printf("scheduler: orphan frames sweep failed: %v", err)
+	} else if swept > 0 {
+		log.Printf("scheduler: swept %d orphaned frame files", swept)
+	}
+
+	// 3. Check and apply daily GeoIP database updates
 	if geo := e.store.GeoIP(); geo != nil {
 		if err := geo.CheckAndApplyUpdates(ctx); err != nil {
 			log.Printf("scheduler: geoip database update check: %v", err)

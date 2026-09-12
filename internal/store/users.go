@@ -29,6 +29,11 @@ type UserSummary struct {
 	LastPlatform      string          `json:"last_platform"`
 	LastBrowser       string          `json:"last_browser"`
 	LastIP            string          `json:"last_ip"`
+	CountryCode       string          `json:"country_code,omitempty"`
+	CountryName       string          `json:"country_name,omitempty"`
+	City              string          `json:"city,omitempty"`
+	Latitude          *float64        `json:"latitude,omitempty"`
+	Longitude         *float64        `json:"longitude,omitempty"`
 }
 
 type UserDailyStat struct {
@@ -38,14 +43,25 @@ type UserDailyStat struct {
 	AvgDurationSec float64 `json:"avg_duration_sec"`
 }
 
+type GeoLocationPoint struct {
+	CountryCode string  `json:"country_code"`
+	CountryName string  `json:"country_name"`
+	Region      string  `json:"region"`
+	City        string  `json:"city"`
+	Latitude    float64 `json:"latitude"`
+	Longitude   float64 `json:"longitude"`
+	Count       int     `json:"count"`
+}
+
 type ProjectUsersResponse struct {
-	TotalUsers      int             `json:"total_users"`
-	ActiveUsers     int             `json:"active_users"`
-	AvgDurationSec  float64         `json:"avg_duration_sec"`
-	SessionsPerUser float64         `json:"sessions_per_user"`
-	ErrorUserCount  int             `json:"error_user_count"`
-	Daily           []UserDailyStat `json:"daily"`
-	Users           []UserSummary   `json:"users"`
+	TotalUsers      int                `json:"total_users"`
+	ActiveUsers     int                `json:"active_users"`
+	AvgDurationSec  float64            `json:"avg_duration_sec"`
+	SessionsPerUser float64            `json:"sessions_per_user"`
+	ErrorUserCount  int                `json:"error_user_count"`
+	Daily           []UserDailyStat    `json:"daily"`
+	Users           []UserSummary      `json:"users"`
+	Locations       []GeoLocationPoint `json:"locations"`
 }
 
 func (s *Store) ListProjectUsers(ctx context.Context, projectID int64, days int, query string) (*ProjectUsersResponse, error) {
@@ -56,8 +72,9 @@ func (s *Store) ListProjectUsers(ctx context.Context, projectID int64, days int,
 	since := now.AddDate(0, 0, -(days - 1)).Truncate(24 * time.Hour)
 
 	resp := &ProjectUsersResponse{
-		Daily: []UserDailyStat{},
-		Users: []UserSummary{},
+		Daily:     []UserDailyStat{},
+		Users:     []UserSummary{},
+		Locations: []GeoLocationPoint{},
 	}
 
 	// 1. Overall stats across all identified users in project
@@ -130,7 +147,50 @@ func (s *Store) ListProjectUsers(ctx context.Context, projectID int64, days int,
 		return nil, fmt.Errorf("iterate daily users: %w", err)
 	}
 
-	// 3. User directory list
+	// 3. Visitor GeoIP locations across project sessions in the time window
+	locRows, err := s.db.QueryContext(ctx, `
+		SELECT
+			COALESCE(country_code, ''),
+			COALESCE(country_name, ''),
+			COALESCE(region, ''),
+			COALESCE(city, ''),
+			ROUND(latitude::numeric, 3)::double precision AS lat,
+			ROUND(longitude::numeric, 3)::double precision AS lon,
+			COUNT(*)
+		FROM sessions
+		WHERE project_id = $1
+		  AND started_at >= $2
+		  AND latitude IS NOT NULL
+		  AND longitude IS NOT NULL
+		GROUP BY 1, 2, 3, 4, 5, 6
+		ORDER BY 7 DESC
+		LIMIT 500
+	`, projectID, since)
+	if err != nil {
+		return nil, fmt.Errorf("query visitor locations: %w", err)
+	}
+	defer locRows.Close()
+
+	for locRows.Next() {
+		var pt GeoLocationPoint
+		if err := locRows.Scan(
+			&pt.CountryCode,
+			&pt.CountryName,
+			&pt.Region,
+			&pt.City,
+			&pt.Latitude,
+			&pt.Longitude,
+			&pt.Count,
+		); err != nil {
+			return nil, fmt.Errorf("scan visitor location: %w", err)
+		}
+		resp.Locations = append(resp.Locations, pt)
+	}
+	if err := locRows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate visitor locations: %w", err)
+	}
+
+	// 4. User directory list
 	q := `
 		SELECT
 			s.user_id,
@@ -144,7 +204,12 @@ func (s *Store) ListProjectUsers(ctx context.Context, projectID int64, days int,
 			MAX(s.last_seen_at),
 			COALESCE((array_agg(s.platform ORDER BY s.last_seen_at DESC))[1], ''),
 			COALESCE((array_agg(s.browser ORDER BY s.last_seen_at DESC))[1], ''),
-			COALESCE((array_agg(s.ip ORDER BY s.last_seen_at DESC))[1], '')
+			COALESCE((array_agg(s.ip ORDER BY s.last_seen_at DESC))[1], ''),
+			COALESCE((array_agg(s.country_code ORDER BY (s.country_code != '') DESC, s.last_seen_at DESC))[1], ''),
+			COALESCE((array_agg(s.country_name ORDER BY (s.country_name != '') DESC, s.last_seen_at DESC))[1], ''),
+			COALESCE((array_agg(s.city ORDER BY (s.city != '') DESC, s.last_seen_at DESC))[1], ''),
+			(array_agg(s.latitude ORDER BY (s.latitude IS NOT NULL) DESC, s.last_seen_at DESC))[1],
+			(array_agg(s.longitude ORDER BY (s.longitude IS NOT NULL) DESC, s.last_seen_at DESC))[1]
 		FROM sessions s
 		WHERE s.project_id = $1 AND s.user_id != ''
 	`
@@ -182,6 +247,11 @@ func (s *Store) ListProjectUsers(ctx context.Context, projectID int64, days int,
 			&u.LastPlatform,
 			&u.LastBrowser,
 			&u.LastIP,
+			&u.CountryCode,
+			&u.CountryName,
+			&u.City,
+			nullFloatCol{&u.Latitude},
+			nullFloatCol{&u.Longitude},
 		); err != nil {
 			return nil, err
 		}

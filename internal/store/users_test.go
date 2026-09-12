@@ -59,8 +59,8 @@ func TestListProjectUsers(t *testing.T) {
 		t.Fatalf("Ingest session 1: %v", err)
 	}
 
-	// Update last_seen_at for session 1 to simulate a 3-minute session (180s)
-	_, err = st.db.ExecContext(ctx, `UPDATE sessions SET last_seen_at = $1 WHERE id = 'sess-user-1'`, t1.Add(3*time.Minute))
+	// Update last_seen_at and geo info for session 1 to simulate a 3-minute session (180s)
+	_, err = st.db.ExecContext(ctx, `UPDATE sessions SET last_seen_at = $1, country_code = 'TR', country_name = 'Turkey', city = 'Istanbul', latitude = 41.0082, longitude = 28.9784 WHERE id = 'sess-user-1'`, t1.Add(3*time.Minute))
 	if err != nil {
 		t.Fatalf("Update last_seen_at: %v", err)
 	}
@@ -85,8 +85,8 @@ func TestListProjectUsers(t *testing.T) {
 		t.Fatalf("Ingest session 2: %v", err)
 	}
 
-	// Update last_seen_at for session 2 to simulate a 1-minute session (60s)
-	_, err = st.db.ExecContext(ctx, `UPDATE sessions SET last_seen_at = $1 WHERE id = 'sess-user-2'`, t2.Add(1*time.Minute))
+	// Update last_seen_at and geo for session 2 to simulate a 1-minute session (60s)
+	_, err = st.db.ExecContext(ctx, `UPDATE sessions SET last_seen_at = $1, country_code = 'DE', country_name = 'Germany', city = 'Berlin', latitude = 52.5200, longitude = 13.4050 WHERE id = 'sess-user-2'`, t2.Add(1*time.Minute))
 	if err != nil {
 		t.Fatalf("Update last_seen_at: %v", err)
 	}
@@ -108,6 +108,29 @@ func TestListProjectUsers(t *testing.T) {
 	}
 	if len(res.Users) != 2 {
 		t.Fatalf("expected 2 users in list, got %d", len(res.Users))
+	}
+
+	// Verify Locations on map
+	if len(res.Locations) != 2 {
+		t.Fatalf("expected 2 geo locations, got %d", len(res.Locations))
+	}
+	if res.Locations[0].CountryCode == "" || res.Locations[0].Latitude == 0 {
+		t.Errorf("expected valid location point, got %+v", res.Locations[0])
+	}
+
+	// Verify user location
+	var kaslyer *UserSummary
+	for i := range res.Users {
+		if res.Users[i].UserID == "kaslyer@example.com" {
+			kaslyer = &res.Users[i]
+			break
+		}
+	}
+	if kaslyer == nil {
+		t.Fatal("kaslyer not found in users list")
+	}
+	if kaslyer.CountryCode != "TR" || kaslyer.City != "Istanbul" || kaslyer.Latitude == nil {
+		t.Errorf("expected Istanbul TR for kaslyer, got %+v", kaslyer)
 	}
 
 	// Test search query
