@@ -49,6 +49,21 @@ func TestSearchQueryParsing(t *testing.T) {
 			t.Fatal("expected error on unknown key, got nil")
 		}
 	})
+
+	t.Run("valid location filter keys parse successfully", func(t *testing.T) {
+		args := []any{}
+		next := func(v any) string {
+			args = append(args, v)
+			return "$" + strconv.Itoa(len(args))
+		}
+		w, err := BuildSessionSearchWhere("country:TR city:Istanbul region:Marmara", next)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if w == "" {
+			t.Fatal("expected non-empty where clause")
+		}
+	})
 }
 
 func TestSearchExecution(t *testing.T) {

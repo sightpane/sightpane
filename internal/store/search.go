@@ -122,10 +122,10 @@ func BuildSessionSearchWhere(q string, nextPlaceholder func(any) string) (string
 
 	for _, tok := range tokens {
 		if tok.Key == "" {
-			// Free text search across user, route, ip
+			// Free text search across user, route, ip, location
 			p := "%" + tok.Value + "%"
 			ph := nextPlaceholder(p)
-			clauses = append(clauses, fmt.Sprintf("(user_id ILIKE %s OR current_route ILIKE %s OR ip ILIKE %s OR user_json::text ILIKE %s OR device_json::text ILIKE %s)", ph, ph, ph, ph, ph))
+			clauses = append(clauses, fmt.Sprintf("(user_id ILIKE %s OR current_route ILIKE %s OR ip ILIKE %s OR country_code ILIKE %s OR country_name ILIKE %s OR city ILIKE %s OR user_json::text ILIKE %s OR device_json::text ILIKE %s)", ph, ph, ph, ph, ph, ph, ph, ph))
 			continue
 		}
 
@@ -133,6 +133,16 @@ func BuildSessionSearchWhere(q string, nextPlaceholder func(any) string) (string
 		case tok.Key == "release":
 			ph := nextPlaceholder(tok.Value)
 			clauses = append(clauses, fmt.Sprintf("release = %s", ph))
+		case tok.Key == "country" || tok.Key == "country_code":
+			ph := nextPlaceholder(strings.ToUpper(tok.Value))
+			phName := nextPlaceholder("%" + tok.Value + "%")
+			clauses = append(clauses, fmt.Sprintf("(country_code = %s OR country_name ILIKE %s)", ph, phName))
+		case tok.Key == "city":
+			ph := nextPlaceholder("%" + tok.Value + "%")
+			clauses = append(clauses, fmt.Sprintf("city ILIKE %s", ph))
+		case tok.Key == "region":
+			ph := nextPlaceholder("%" + tok.Value + "%")
+			clauses = append(clauses, fmt.Sprintf("region ILIKE %s", ph))
 		case tok.Key == "platform":
 			ph := nextPlaceholder(strings.ToLower(tok.Value))
 			clauses = append(clauses, fmt.Sprintf("LOWER(platform) = %s", ph))
