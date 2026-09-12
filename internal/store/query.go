@@ -44,9 +44,15 @@ type Session struct {
 	Route      string          `json:"current_route"`
 	SDKName    string          `json:"sdk_name"`
 	SDKVersion string          `json:"sdk_version"`
-	AppType    string          `json:"app_type"`
-	OS         string          `json:"os"`
-	OSVersion  string          `json:"os_version"`
+	AppType     string          `json:"app_type"`
+	OS          string          `json:"os"`
+	OSVersion   string          `json:"os_version"`
+	CountryCode string          `json:"country_code"`
+	CountryName string          `json:"country_name"`
+	Region      string          `json:"region"`
+	City        string          `json:"city"`
+	Latitude    *float64        `json:"latitude,omitempty"`
+	Longitude   *float64        `json:"longitude,omitempty"`
 }
 
 type SessionFilter struct {
@@ -58,12 +64,12 @@ type SessionFilter struct {
 	Cursor     string
 }
 
-const sessionCols = `id, project_id, started_at, last_seen_at, ended_at, user_id, user_json, device_json, props_json, platform, release, error_count, event_count, frame_count, ip, browser, visitor_key, current_route, sdk_name, sdk_version, app_type, os, os_version`
+const sessionCols = `id, project_id, started_at, last_seen_at, ended_at, user_id, user_json, device_json, props_json, platform, release, error_count, event_count, frame_count, ip, browser, visitor_key, current_route, sdk_name, sdk_version, app_type, os, os_version, country_code, country_name, region, city, latitude, longitude`
 
 func scanSession(sc interface{ Scan(...any) error }) (*Session, error) {
 	var s Session
 	var user, device, props string
-	if err := sc.Scan(&s.ID, &s.ProjectID, tsCol{&s.StartedAt}, tsCol{&s.LastSeenAt}, nullTSCol{&s.EndedAt}, &s.UserID, &user, &device, &props, &s.Platform, &s.Release, &s.ErrorCount, &s.EventCount, &s.FrameCount, &s.IP, &s.Browser, &s.VisitorKey, &s.Route, &s.SDKName, &s.SDKVersion, &s.AppType, &s.OS, &s.OSVersion); err != nil {
+	if err := sc.Scan(&s.ID, &s.ProjectID, tsCol{&s.StartedAt}, tsCol{&s.LastSeenAt}, nullTSCol{&s.EndedAt}, &s.UserID, &user, &device, &props, &s.Platform, &s.Release, &s.ErrorCount, &s.EventCount, &s.FrameCount, &s.IP, &s.Browser, &s.VisitorKey, &s.Route, &s.SDKName, &s.SDKVersion, &s.AppType, &s.OS, &s.OSVersion, &s.CountryCode, &s.CountryName, &s.Region, &s.City, nullFloatCol{&s.Latitude}, nullFloatCol{&s.Longitude}); err != nil {
 		return nil, err
 	}
 	s.User, s.Device, s.Props = json.RawMessage(user), json.RawMessage(device), json.RawMessage(props)

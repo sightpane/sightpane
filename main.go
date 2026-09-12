@@ -37,11 +37,10 @@ import (
 	"sightpane/internal/alert"
 	"sightpane/internal/blob"
 	"sightpane/internal/config"
-	"sightpane/internal/crons"
 	"sightpane/internal/netx"
+	"sightpane/internal/scheduler"
 	"sightpane/internal/server"
 	"sightpane/internal/store"
-	"sightpane/internal/uptime"
 )
 
 // shutdownGrace is how long in-flight requests get to finish on SIGTERM. An
@@ -75,6 +74,9 @@ func main() {
 		Frames:              frames,
 		RetentionDays:       cfg.RetentionDays,
 		SourceMapCacheBytes: int64(cfg.SourceMapCacheMB) << 20,
+		GeoIPDB:             cfg.GeoIPDB,
+		DevGeoIPCountry:     cfg.DevGeoIPCountry,
+		DevGeoIPCity:        cfg.DevGeoIPCity,
 	})
 	if err != nil {
 		log.Fatalf("store: %v", err)
@@ -89,18 +91,13 @@ func main() {
 	notifier.Start()
 	defer notifier.Stop()
 
-	cronEvaluator := crons.NewEvaluator(st, notifier)
-	cronEvaluator.Start()
-	defer cronEvaluator.Stop()
-
-	uptimeChecker := uptime.NewChecker(20)
-	uptimeRunner := uptime.NewRunner(st, uptimeChecker, notifier)
-	uptimeRunner.Start()
-	defer uptimeRunner.Stop()
-
-	metricWorker := alert.NewMetricWorker(st, notifier)
-	metricWorker.Start()
-	defer metricWorker.Stop()
+	sched := scheduler.New(scheduler.Options{
+		Store:         st,
+		Notifier:      notifier,
+		RetentionDays: cfg.RetentionDays,
+	})
+	sched.Start()
+	defer sched.Stop()
 
 	ln, err := net.Listen("tcp", cfg.Addr)
 	if err != nil {
@@ -116,41 +113,9 @@ func main() {
 	log.Printf("sightpane listening on %s (db %s, data %s, frames %s, project %q key %q, admin %s, proxy_protocol=%v, retention=%dd, ingest_rate=%d/min)",
 		cfg.Addr, st.Driver(), cfg.DataDir, st.Frames(), cfg.DefaultProject, cfg.DefaultKey, cfg.AdminEmail, cfg.ProxyProtocol, cfg.RetentionDays, cfg.IngestRate)
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
 	stop := make(chan os.Signal, 1)
 	signal.Notify(stop, os.Interrupt, syscall.SIGTERM)
 	defer signal.Stop(stop)
-
-	// Daily data retention job
-	retentionTicker := time.NewTicker(24 * time.Hour)
-	go func() {
-		defer retentionTicker.Stop()
-		// Run initial sweep after short delay
-		select {
-		case <-time.After(1 * time.Minute):
-			if n, err := st.PurgeExpired(context.Background(), cfg.RetentionDays); err != nil {
-				log.Printf("retention cleanup: %v", err)
-			} else if n > 0 {
-				log.Printf("retention cleanup: purged %d expired sessions", n)
-			}
-		case <-ctx.Done():
-			return
-		}
-		for {
-			select {
-			case <-retentionTicker.C:
-				if n, err := st.PurgeExpired(context.Background(), cfg.RetentionDays); err != nil {
-					log.Printf("retention cleanup: %v", err)
-				} else if n > 0 {
-					log.Printf("retention cleanup: purged %d expired sessions", n)
-				}
-			case <-ctx.Done():
-				return
-			}
-		}
-	}()
 
 	// Serve from another goroutine so the signal handler below can shut the app
 	// down instead of the process being killed mid-request. Postgres survives a
@@ -163,12 +128,10 @@ func main() {
 
 	select {
 	case err := <-serveErr:
-		cancel()
 		if err != nil && !errors.Is(err, net.ErrClosed) {
 			log.Fatalf("serve: %v", err)
 		}
 	case sig := <-stop:
-		cancel()
 		log.Printf("%s received, finishing in-flight requests (up to %s)", sig, shutdownGrace)
 		if err := app.ShutdownWithTimeout(shutdownGrace); err != nil {
 			log.Printf("shutdown: %v", err)

@@ -67,6 +67,13 @@ type Config struct {
 	// IPs or CIDRs). Empty trusts every peer, which lets a direct client forge
 	// its own address — set it whenever the port is reachable from outside.
 	TrustedProxies string
+
+	// GeoIPDB is the file path to MaxMind GeoLite2/GeoIP2 City MMDB.
+	GeoIPDB string
+	// DevGeoIPCountry overrides the detected country code for local/private IPs in dev.
+	DevGeoIPCountry string
+	// DevGeoIPCity overrides the detected city for local/private IPs in dev.
+	DevGeoIPCity string
 }
 
 // S3Config addresses an S3-compatible object store; with Ceph this is the RADOS
@@ -119,8 +126,11 @@ func Load() Config {
 			Pass: env("SMTP_PASS", ""),
 			From: env("SMTP_FROM", "alerts@sightpane.local"),
 		},
-		ProxyProtocol:  env("PROXY_PROTOCOL", "") != "",
-		TrustedProxies: env("TRUSTED_PROXIES", ""),
+		ProxyProtocol:   env("PROXY_PROTOCOL", "") != "",
+		TrustedProxies:  env("TRUSTED_PROXIES", ""),
+		GeoIPDB:         env("GEOIP_DB_PATH", ""),
+		DevGeoIPCountry: env("DEV_GEOIP_COUNTRY", ""),
+		DevGeoIPCity:    env("DEV_GEOIP_CITY", ""),
 	}
 }
 

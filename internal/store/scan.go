@@ -50,6 +50,39 @@ func (t nullTSCol) Scan(src any) error {
 	return nil
 }
 
+// nullFloatCol is for scanning nullable float columns (e.g. latitude, longitude).
+// SQL NULL stays a nil pointer rather than 0.0.
+type nullFloatCol struct{ dst **float64 }
+
+func (f nullFloatCol) Scan(src any) error {
+	if src == nil {
+		*f.dst = nil
+		return nil
+	}
+	switch v := src.(type) {
+	case float64:
+		*f.dst = &v
+	case float32:
+		f64 := float64(v)
+		*f.dst = &f64
+	case []byte:
+		var f64 float64
+		if _, err := fmt.Sscanf(string(v), "%f", &f64); err != nil {
+			return err
+		}
+		*f.dst = &f64
+	case string:
+		var f64 float64
+		if _, err := fmt.Sscanf(v, "%f", &f64); err != nil {
+			return err
+		}
+		*f.dst = &f64
+	default:
+		return fmt.Errorf("float column: cannot scan %T", src)
+	}
+	return nil
+}
+
 // asTime parses one of the RFC3339Nano strings a model carries back into an
 // instant, for a query that has to compare against it. A value that will not
 // parse becomes the zero time, which as a lower bound matches everything —

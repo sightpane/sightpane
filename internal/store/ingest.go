@@ -179,6 +179,23 @@ func (s *Store) Ingest(ctx context.Context, projectID int64, env *Envelope, ip s
 	deviceJSON, d := EnrichDeviceJSON(rawDev)
 	propsJSON := rawOr(env.Session.Props, "{}")
 
+	// Geolocation resolution: resolve from raw client IP before anonymization/suppression
+	var countryCode, countryName, region, city string
+	var lat, lon *float64
+	if s.geoip != nil && ip != "" {
+		loc := s.geoip.Lookup(ip)
+		countryCode = loc.CountryCode
+		countryName = loc.CountryName
+		region = loc.Region
+		city = loc.City
+		if loc.Latitude != 0 || loc.Longitude != 0 {
+			latVal := loc.Latitude
+			lonVal := loc.Longitude
+			lat = &latVal
+			lon = &lonVal
+		}
+	}
+
 	// Privacy & PII settings
 	var storeIP, scrubRulesJSON string
 	_ = s.db.QueryRowContext(ctx, `SELECT store_ip, scrub_rules_json FROM projects WHERE id=$1`, projectID).Scan(&storeIP, &scrubRulesJSON)
@@ -217,19 +234,25 @@ func (s *Store) Ingest(ctx context.Context, projectID int64, env *Envelope, ip s
 	}
 	defer tx.Rollback()
 
-	_, err = tx.Exec(`INSERT INTO sessions(id, project_id, started_at, last_seen_at, user_id, user_json, device_json, props_json, platform, release, ip, browser, visitor_key, current_route, sdk_name, sdk_version, app_type, os, os_version)
-		VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19)
+	_, err = tx.Exec(`INSERT INTO sessions(id, project_id, started_at, last_seen_at, user_id, user_json, device_json, props_json, platform, release, ip, browser, visitor_key, current_route, sdk_name, sdk_version, app_type, os, os_version, country_code, country_name, region, city, latitude, longitude)
+		VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25)
 		ON CONFLICT(id) DO UPDATE SET last_seen_at=excluded.last_seen_at, user_id=excluded.user_id, user_json=excluded.user_json,
 		  device_json=excluded.device_json, props_json=excluded.props_json, platform=excluded.platform, release=excluded.release,
-		  ip=CASE WHEN $20='none' THEN '' WHEN excluded.ip='' THEN sessions.ip ELSE excluded.ip END,
+		  ip=CASE WHEN $26='none' THEN '' WHEN excluded.ip='' THEN sessions.ip ELSE excluded.ip END,
 		  browser=excluded.browser, visitor_key=excluded.visitor_key,
 		  current_route=CASE WHEN excluded.current_route='' THEN sessions.current_route ELSE excluded.current_route END,
 		  sdk_name=CASE WHEN excluded.sdk_name!='' THEN excluded.sdk_name ELSE sessions.sdk_name END,
 		  sdk_version=CASE WHEN excluded.sdk_version!='' THEN excluded.sdk_version ELSE sessions.sdk_version END,
 		  app_type=CASE WHEN excluded.app_type!='' THEN excluded.app_type ELSE sessions.app_type END,
 		  os=CASE WHEN excluded.os!='' THEN excluded.os ELSE sessions.os END,
-		  os_version=CASE WHEN excluded.os_version!='' THEN excluded.os_version ELSE sessions.os_version END`,
-		env.Session.ID, projectID, started, now, userID, userJSON, deviceJSON, propsJSON, d.Platform, d.Release, ip, browser, visitor, route, env.SDK.Name, env.SDK.Version, d.AppType, d.OS, d.OSVersion, storeIP)
+		  os_version=CASE WHEN excluded.os_version!='' THEN excluded.os_version ELSE sessions.os_version END,
+		  country_code=CASE WHEN excluded.country_code!='' THEN excluded.country_code ELSE sessions.country_code END,
+		  country_name=CASE WHEN excluded.country_name!='' THEN excluded.country_name ELSE sessions.country_name END,
+		  region=CASE WHEN excluded.region!='' THEN excluded.region ELSE sessions.region END,
+		  city=CASE WHEN excluded.city!='' THEN excluded.city ELSE sessions.city END,
+		  latitude=COALESCE(excluded.latitude, sessions.latitude),
+		  longitude=COALESCE(excluded.longitude, sessions.longitude)`,
+		env.Session.ID, projectID, started, now, userID, userJSON, deviceJSON, propsJSON, d.Platform, d.Release, ip, browser, visitor, route, env.SDK.Name, env.SDK.Version, d.AppType, d.OS, d.OSVersion, countryCode, countryName, region, city, lat, lon, storeIP)
 	if err != nil {
 		return nil, err
 	}

@@ -28,6 +28,7 @@ import (
 
 	"sightpane/internal/apierr"
 	"sightpane/internal/blob"
+	"sightpane/internal/geoip"
 	"sightpane/internal/symbol"
 
 	"github.com/jackc/pgx/v5"
@@ -41,6 +42,7 @@ import (
 type Store struct {
 	db    *sql.DB
 	blobs blob.Store
+	geoip *geoip.Resolver
 	// timescale reports whether the extension was available. The queries do not
 	// care, because items_daily exists either way; retention and compression do.
 	timescale bool
@@ -123,6 +125,12 @@ type Options struct {
 	// SourceMapCacheBytes bounds the parsed source maps held in memory. Zero
 	// takes symbol.DefaultMaxBytes.
 	SourceMapCacheBytes int64
+	// GeoIPDB is an optional file path to MaxMind GeoLite2/GeoIP2 mmdb file.
+	GeoIPDB string
+	// DevGeoIPCountry overrides country code for local/private IPs in dev.
+	DevGeoIPCountry string
+	// DevGeoIPCity overrides city for local/private IPs in dev.
+	DevGeoIPCity string
 }
 
 // Open connects, migrates the schema and applies the retention policy.
@@ -138,7 +146,15 @@ func Open(opt Options) (*Store, error) {
 		}
 		frames = fs
 	}
-	s := &Store{blobs: frames}
+	s := &Store{
+		blobs: frames,
+		geoip: geoip.New(geoip.Options{
+			DBPath:     opt.GeoIPDB,
+			DataDir:    opt.DataDir,
+			DevCountry: opt.DevGeoIPCountry,
+			DevCity:    opt.DevGeoIPCity,
+		}),
+	}
 	s.symbols = symbol.New(s, opt.SourceMapCacheBytes)
 	if err := s.connect(opt.DSN); err != nil {
 		return nil, err
@@ -233,7 +249,15 @@ func (s *Store) Close() error {
 			err = e
 		}
 	}
+	if s.geoip != nil {
+		_ = s.geoip.Close()
+	}
 	return err
+}
+
+// GeoIP returns the Store's geoip resolver instance.
+func (s *Store) GeoIP() *geoip.Resolver {
+	return s.geoip
 }
 
 // isUniqueViolation reports whether err is a duplicate-key failure.
