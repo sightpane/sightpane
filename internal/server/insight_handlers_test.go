@@ -23,7 +23,7 @@ func TestDashboardAndInsightEndpoints(t *testing.T) {
 	dashReq := map[string]any{
 		"name":        "Executive Overview",
 		"description": "High-level metrics and KPIs",
-		"is_default":   true,
+		"is_default":  true,
 		"layout": []map[string]any{
 			{"insight_id": "ins-1", "col": 0, "row": 0, "w": 6, "h": 4},
 		},
@@ -51,7 +51,7 @@ func TestDashboardAndInsightEndpoints(t *testing.T) {
 	updateReq := map[string]any{
 		"name":        "Executive Overview V2",
 		"description": "Updated description",
-		"is_default":   false,
+		"is_default":  false,
 		"layout": []map[string]any{
 			{"insight_id": "ins-1", "col": 0, "row": 0, "w": 12, "h": 6},
 		},

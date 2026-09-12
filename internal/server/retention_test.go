@@ -240,4 +240,3 @@ func TestRetentionSweepOrphanFrames(t *testing.T) {
 		t.Fatalf("expected orphan file to be deleted, got err: %v", err)
 	}
 }
-

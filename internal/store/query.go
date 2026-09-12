@@ -24,26 +24,26 @@ import (
 // --- Read queries ---
 
 type Session struct {
-	ID         string          `json:"id"`
-	ProjectID  int64           `json:"project_id"`
-	StartedAt  string          `json:"started_at"`
-	LastSeenAt string          `json:"last_seen_at"`
-	EndedAt    *string         `json:"ended_at"`
-	UserID     string          `json:"user_id"`
-	User       json.RawMessage `json:"user"`
-	Device     json.RawMessage `json:"device"`
-	Props      json.RawMessage `json:"props"`
-	Platform   string          `json:"platform"`
-	Release    string          `json:"release"`
-	ErrorCount int             `json:"error_count"`
-	EventCount int             `json:"event_count"`
-	FrameCount int             `json:"frame_count"`
-	IP         string          `json:"ip"`
-	Browser    string          `json:"browser"`
-	VisitorKey string          `json:"visitor_key"`
-	Route      string          `json:"current_route"`
-	SDKName    string          `json:"sdk_name"`
-	SDKVersion string          `json:"sdk_version"`
+	ID          string          `json:"id"`
+	ProjectID   int64           `json:"project_id"`
+	StartedAt   string          `json:"started_at"`
+	LastSeenAt  string          `json:"last_seen_at"`
+	EndedAt     *string         `json:"ended_at"`
+	UserID      string          `json:"user_id"`
+	User        json.RawMessage `json:"user"`
+	Device      json.RawMessage `json:"device"`
+	Props       json.RawMessage `json:"props"`
+	Platform    string          `json:"platform"`
+	Release     string          `json:"release"`
+	ErrorCount  int             `json:"error_count"`
+	EventCount  int             `json:"event_count"`
+	FrameCount  int             `json:"frame_count"`
+	IP          string          `json:"ip"`
+	Browser     string          `json:"browser"`
+	VisitorKey  string          `json:"visitor_key"`
+	Route       string          `json:"current_route"`
+	SDKName     string          `json:"sdk_name"`
+	SDKVersion  string          `json:"sdk_version"`
 	AppType     string          `json:"app_type"`
 	OS          string          `json:"os"`
 	OSVersion   string          `json:"os_version"`
@@ -127,13 +127,13 @@ func (s *Store) ListSessions(f SessionFilter) ([]Session, error) {
 }
 
 type Item struct {
-	ID           int64           `json:"id"`
-	TS           string          `json:"ts"`
-	Type         string          `json:"type"`
-	Name         string          `json:"name"`
-	Body         json.RawMessage `json:"body"`
-	IssueID      *int64          `json:"issue_id,omitempty"`
-	Session      string          `json:"session_id,omitempty"`
+	ID      int64           `json:"id"`
+	TS      string          `json:"ts"`
+	Type    string          `json:"type"`
+	Name    string          `json:"name"`
+	Body    json.RawMessage `json:"body"`
+	IssueID *int64          `json:"issue_id,omitempty"`
+	Session string          `json:"session_id,omitempty"`
 	// Symbolicated is `{"frames":[…]}` for an error from a release build whose
 	// source map was uploaded, and absent otherwise. It sits beside Body rather
 	// than inside it because Body is what the SDK sent, unaltered.
@@ -277,7 +277,6 @@ func scanIssue(sc interface{ Scan(...any) error }) (*Issue, error) {
 	i.Resolved = (i.Status == "resolved")
 	return &i, nil
 }
-
 
 type IssueFilter struct {
 	ProjectID       int64
@@ -423,7 +422,6 @@ func (s *Store) SetIssueResolvedWithRelease(id int64, resolved bool, release str
 	}
 	return nil
 }
-
 
 type EventCount struct {
 	Name  string `json:"name"`

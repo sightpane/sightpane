@@ -86,4 +86,3 @@ func TestFingerprint(t *testing.T) {
 		t.Fatalf("different JS frames must differ")
 	}
 }
-

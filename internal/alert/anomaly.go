@@ -12,11 +12,11 @@ import (
 
 // AnomalyEvaluation holds the results of evaluating an anomaly spike rule.
 type AnomalyEvaluation struct {
-	CurrentValue float64
+	CurrentValue  float64
 	BaselineValue float64
-	Multiplier   float64
-	IsAnomaly    bool
-	Reason       string
+	Multiplier    float64
+	IsAnomaly     bool
+	Reason        string
 }
 
 // EvaluateAnomaly evaluates whether currentValue represents an anomalous spike relative to baselineValue.

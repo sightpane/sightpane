@@ -42,7 +42,7 @@ func TestProfileEndpointsAndFlameChartData(t *testing.T) {
 	payload := map[string]any{
 		"transaction_name": "route:/feed",
 		"duration_ms":      650.0,
-		"cpu_time_ms":       480.0,
+		"cpu_time_ms":      480.0,
 		"thread_name":      "main",
 		"platform":         "flutter",
 		"trace_id":         "trace-prof-12345",
@@ -113,7 +113,7 @@ func TestProfileEndpointsAndFlameChartData(t *testing.T) {
 				"ts":               time.Now().UTC().Format(time.RFC3339Nano),
 				"transaction_name": "route:/checkout",
 				"duration_ms":      320.0,
-				"cpu_time_ms":       290.0,
+				"cpu_time_ms":      290.0,
 				"thread_name":      "worker",
 				"profile_data":     profileData,
 			},
@@ -123,7 +123,6 @@ func TestProfileEndpointsAndFlameChartData(t *testing.T) {
 	if rr.Code != 202 && rr.Code != 200 {
 		t.Fatalf("expected 202/200 from envelope ingest, got %d: %s", rr.Code, rr.Body.String())
 	}
-
 
 	// Verify the envelope-ingested profile is in the list
 	var envList []store.ProfileSummary

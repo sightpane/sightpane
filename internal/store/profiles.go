@@ -216,7 +216,6 @@ func (s *Store) GetTopSlowFunctions(
 		argIdx++
 	}
 
-
 	sb.WriteString(fmt.Sprintf(" ORDER BY created_at DESC LIMIT $%d", argIdx))
 	args = append(args, 25) // analyze up to 25 latest profiles for aggregated function stats
 

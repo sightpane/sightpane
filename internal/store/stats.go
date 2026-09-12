@@ -54,14 +54,14 @@ func (s *Store) Stats(projectID int64, days int) (*ProjectStats, error) {
 	now := time.Now().UTC()
 	since := now.AddDate(0, 0, -(days - 1)).Truncate(24 * time.Hour)
 	st := &ProjectStats{
-		Days:       days,
-		Dropped:    s.DroppedQuota(projectID),
-		Platforms:  []NameCount{},
-		AppTypes:   []NameCount{},
-		OSs:        []NameCount{},
-		Releases:   []NameCount{},
-		TopIssues:  []Issue{},
-		TopEvents:  []NameCount{},
+		Days:      days,
+		Dropped:   s.DroppedQuota(projectID),
+		Platforms: []NameCount{},
+		AppTypes:  []NameCount{},
+		OSs:       []NameCount{},
+		Releases:  []NameCount{},
+		TopIssues: []Issue{},
+		TopEvents: []NameCount{},
 	}
 	// Every query below takes the same two parameters in the same order, which
 	// is what lets fill and nameCounts stay one-liners.

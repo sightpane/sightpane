@@ -1848,8 +1848,3 @@ func TestUsersEndpoint(t *testing.T) {
 		t.Errorf("expected user name Kaslyer, got %q", res.Users[0].Name)
 	}
 }
-
-
-
-
-

@@ -92,4 +92,3 @@ func (s *Server) deleteReleaseArtifact(c fiber.Ctx) error {
 	}
 	return c.SendStatus(fiber.StatusNoContent)
 }
-

@@ -17,8 +17,8 @@ package apierr
 import "fmt"
 
 const (
-	CodeInternal = "internal"
-	CodeBadJSON  = "bad_json"
+	CodeInternal  = "internal"
+	CodeBadJSON   = "bad_json"
 	CodeForbidden = "forbidden"
 	CodeNotFound  = "not_found"
 

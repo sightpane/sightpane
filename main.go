@@ -241,4 +241,3 @@ func runMigrateFrames(args []string, cfg config.Config) {
 	log.Printf("migrate-frames complete: scanned %d, migrated %d, skipped (already synced) %d, verified %d bytes",
 		stats.Scanned, stats.Migrated, stats.Skipped, stats.Bytes)
 }
-

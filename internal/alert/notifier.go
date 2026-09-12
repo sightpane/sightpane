@@ -572,5 +572,3 @@ func (n *Notifier) NotifyMetricIncident(rule *store.MetricAlertRule, incident *s
 		}(cCopy)
 	}
 }
-
-

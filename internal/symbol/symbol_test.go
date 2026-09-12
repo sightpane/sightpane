@@ -268,4 +268,3 @@ func TestCacheEvictsMissingEntries(t *testing.T) {
 		t.Fatalf("rel1 was not evicted: %d loads, want 4", l.calls)
 	}
 }
-

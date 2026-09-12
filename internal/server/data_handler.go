@@ -138,7 +138,6 @@ func (s *Server) resolveIssue(c fiber.Ctx) error {
 	return c.JSON(fiber.Map{"resolved": resolved})
 }
 
-
 func (s *Server) eventSummary(c fiber.Ctx) error {
 	out, err := s.store.EventSummary(pathID(c, "id"), queryInt(c, "days"))
 	if err != nil {
@@ -314,5 +313,3 @@ func (s *Server) listProjectUsers(c fiber.Ctx) error {
 	}
 	return c.JSON(out)
 }
-
-

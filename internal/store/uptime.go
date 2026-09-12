@@ -48,11 +48,11 @@ type UptimeCheck struct {
 }
 
 type UptimeStats struct {
-	TotalMonitors   int     `json:"total_monitors"`
-	UpCount         int     `json:"up_count"`
-	DegradedCount   int     `json:"degraded_count"`
-	DownCount       int     `json:"down_count"`
-	AvgUptimePct    float64 `json:"avg_uptime_percentage"`
+	TotalMonitors int     `json:"total_monitors"`
+	UpCount       int     `json:"up_count"`
+	DegradedCount int     `json:"degraded_count"`
+	DownCount     int     `json:"down_count"`
+	AvgUptimePct  float64 `json:"avg_uptime_percentage"`
 }
 
 type UptimeSSLInfo struct {

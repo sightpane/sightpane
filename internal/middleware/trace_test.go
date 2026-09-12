@@ -38,10 +38,10 @@ func TestW3CTraceparentParsingAndFormatting(t *testing.T) {
 	// Invalid cases
 	invalids := []string{
 		"",
-		"00-4bf92f35-00f067aa-01",                                              // too short
-		"01-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01",             // bad version
-		"00-00000000000000000000000000000000-00f067aa0ba902b7-01",             // all zero trace ID
-		"00-4bf92f3577b34da6a3ce929d0e0e4736-0000000000000000-01",             // all zero span ID
+		"00-4bf92f35-00f067aa-01", // too short
+		"01-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01", // bad version
+		"00-00000000000000000000000000000000-00f067aa0ba902b7-01", // all zero trace ID
+		"00-4bf92f3577b34da6a3ce929d0e0e4736-0000000000000000-01", // all zero span ID
 	}
 	for _, inv := range invalids {
 		if _, err := ParseTraceparent(inv); err == nil {

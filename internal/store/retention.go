@@ -207,4 +207,3 @@ func (s *Store) SweepOrphanFrames(ctx context.Context) (int, error) {
 	}
 	return swept, nil
 }
-

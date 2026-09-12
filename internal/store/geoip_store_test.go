@@ -15,10 +15,10 @@ import (
 
 func TestIngestGeoIPAndCoordinates(t *testing.T) {
 	st, err := Open(Options{
-		DSN:               testdb.DSN(t),
-		DataDir:           t.TempDir(),
-		DevGeoIPCountry:   "TR",
-		DevGeoIPCity:      "Istanbul",
+		DSN:             testdb.DSN(t),
+		DataDir:         t.TempDir(),
+		DevGeoIPCountry: "TR",
+		DevGeoIPCity:    "Istanbul",
 	})
 	if err != nil {
 		t.Fatalf("Open: %v", err)

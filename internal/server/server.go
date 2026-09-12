@@ -203,8 +203,6 @@ func New(st *store.Store, notifier *alert.Notifier, uiDir string, embedded fs.FS
 	api.Post("/projects/:id/insights/query", s.requireProject(roleViewer), s.queryInsight)
 	api.Get("/projects/:id/insights/:insightId/results", s.requireProject(roleViewer), s.getInsightResults)
 
-
-
 	// Session and issue details are addressed globally, so each one resolves its
 	// own project before checking membership.
 	api.Get("/sessions/:id", s.requireAuth, s.getSession)

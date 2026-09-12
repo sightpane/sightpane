@@ -17,8 +17,8 @@ import (
 var ErrCohortNotFound = errors.New("cohort not found")
 
 type CohortRule struct {
-	Event      string `json:"event"`       // e.g. "session_start" or custom event name
-	Operator   string `json:"operator"`    // "gte", "lte", "eq", "gt"
+	Event      string `json:"event"`    // e.g. "session_start" or custom event name
+	Operator   string `json:"operator"` // "gte", "lte", "eq", "gt"
 	Count      int    `json:"count"`
 	WindowDays int    `json:"window_days"` // e.g. 14, 30
 }
