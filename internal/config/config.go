@@ -116,7 +116,7 @@ func Load() Config {
 			AccessKey: env("S3_ACCESS_KEY", ""),
 			SecretKey: envSecret("S3_SECRET_KEY", "S3_SECRET_KEY_FILE", ""),
 			Region:    env("S3_REGION", ""),
-			UseSSL:    env("S3_USE_SSL", "") != "",
+			UseSSL:    envBool("S3_USE_SSL", false),
 		},
 		PublicURL: strings.TrimRight(env("PUBLIC_URL", "http://localhost:8790"), "/"),
 		SMTP: SMTPConfig{
@@ -126,7 +126,7 @@ func Load() Config {
 			Pass: env("SMTP_PASS", ""),
 			From: env("SMTP_FROM", "alerts@sightpane.local"),
 		},
-		ProxyProtocol:   env("PROXY_PROTOCOL", "") != "",
+		ProxyProtocol:   envBool("PROXY_PROTOCOL", false),
 		TrustedProxies:  env("TRUSTED_PROXIES", ""),
 		GeoIPDB:         env("GEOIP_DB_PATH", ""),
 		DevGeoIPCountry: env("DEV_GEOIP_COUNTRY", ""),
@@ -188,6 +188,23 @@ func envInt(name string, def int) int {
 		return def
 	}
 	return n
+}
+
+// envBool parses boolean strings ("true", "1", "false", "0", etc.) safely.
+func envBool(name string, def bool) bool {
+	v := env(name, "")
+	if v == "" {
+		return def
+	}
+	switch strings.ToLower(strings.TrimSpace(v)) {
+	case "1", "t", "true", "yes", "y", "on":
+		return true
+	case "0", "f", "false", "no", "n", "off":
+		return false
+	default:
+		log.Printf("%s%s=%q is not a valid boolean; using %v", prefix, name, v, def)
+		return def
+	}
 }
 
 // oldNamesInUse lists the deprecated variables that are actually set, so the

@@ -53,3 +53,25 @@ func TestLoadS3SecretKeyFile(t *testing.T) {
 		t.Fatalf("expected direct secret, got %q", got.S3.SecretKey)
 	}
 }
+
+func TestLoadBooleans(t *testing.T) {
+	t.Setenv("SIGHTPANE_S3_USE_SSL", "false")
+	t.Setenv("SIGHTPANE_PROXY_PROTOCOL", "false")
+	cfg := Load()
+	if cfg.S3.UseSSL {
+		t.Fatal("expected S3.UseSSL to be false for 'false'")
+	}
+	if cfg.ProxyProtocol {
+		t.Fatal("expected ProxyProtocol to be false for 'false'")
+	}
+
+	t.Setenv("SIGHTPANE_S3_USE_SSL", "true")
+	t.Setenv("SIGHTPANE_PROXY_PROTOCOL", "1")
+	cfg = Load()
+	if !cfg.S3.UseSSL {
+		t.Fatal("expected S3.UseSSL to be true for 'true'")
+	}
+	if !cfg.ProxyProtocol {
+		t.Fatal("expected ProxyProtocol to be true for '1'")
+	}
+}

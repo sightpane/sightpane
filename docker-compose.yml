@@ -1,5 +1,5 @@
 # docker compose up -d --build              →  http://localhost:8790
-# docker compose --profile ceph up -d        →  the same, with frames in Ceph
+# Replay frames are stored in Ceph RADOS Gateway (S3) by default.
 #
 # The build pulls the dashboard from github.com/sightpane/ui; pin it with
 # `UI_REF` below, or set it to `none` for an API-only image.
@@ -14,6 +14,8 @@ services:
     depends_on:
       timescaledb:
         condition: service_healthy
+      ceph:
+        condition: service_healthy
     ports:
       - "8790:8790"
     environment:
@@ -26,13 +28,13 @@ services:
       SIGHTPANE_DEFAULT_KEY: "dev" # the first project key handed to the SDK
       SIGHTPANE_ADMIN_EMAIL: "admin@sightpane.local"
       SIGHTPANE_ADMIN_PASSWORD: "admin123" # change this in production
-      # Replay frames: "fs" keeps them in the volume below, "s3" puts them in an
-      # object store. The ceph profile below sets this to s3 for you.
-      SIGHTPANE_FRAMES: "${SIGHTPANE_FRAMES:-fs}"
-      SIGHTPANE_S3_ENDPOINT: "${SIGHTPANE_S3_ENDPOINT:-}"
+      # Replay frames: "s3" puts them in an object store (Ceph RADOS Gateway).
+      SIGHTPANE_FRAMES: "${SIGHTPANE_FRAMES:-s3}"
+      SIGHTPANE_S3_ENDPOINT: "${SIGHTPANE_S3_ENDPOINT:-ceph:8080}"
       SIGHTPANE_S3_BUCKET: "${SIGHTPANE_S3_BUCKET:-sightpane-frames}"
-      SIGHTPANE_S3_ACCESS_KEY: "${SIGHTPANE_S3_ACCESS_KEY:-}"
-      SIGHTPANE_S3_SECRET_KEY: "${SIGHTPANE_S3_SECRET_KEY:-}"
+      SIGHTPANE_S3_ACCESS_KEY: "${SIGHTPANE_S3_ACCESS_KEY:-hogaccesskey}"
+      SIGHTPANE_S3_SECRET_KEY: "${SIGHTPANE_S3_SECRET_KEY:-hogsecretkey}"
+      SIGHTPANE_S3_USE_SSL: "${SIGHTPANE_S3_USE_SSL:-false}"
       # Alerts & notifications (SMTP & public URL for links):
       SIGHTPANE_PUBLIC_URL: "${SIGHTPANE_PUBLIC_URL:-}"
       SIGHTPANE_SMTP_HOST: "${SIGHTPANE_SMTP_HOST:-}"
@@ -41,7 +43,7 @@ services:
       SIGHTPANE_SMTP_PASS: "${SIGHTPANE_SMTP_PASS:-}"
       SIGHTPANE_SMTP_FROM: "${SIGHTPANE_SMTP_FROM:-no-reply@sightpane.local}"
     volumes:
-      - sightpane-data:/data # the frame PNGs, when SIGHTPANE_FRAMES=fs
+      - sightpane-data:/data # data directory (when SIGHTPANE_FRAMES=fs or local files)
       - ../ui/build/web:/app/ui:ro
     restart: unless-stopped
     # For the real client IP: put this behind a reverse proxy that sends
@@ -82,24 +84,19 @@ services:
       retries: 20
       start_period: 30s
 
-  # Ceph, for keeping replay frames in an object store instead of a volume.
+  # Ceph, for keeping replay frames in an object store instead of a local volume.
   #
   # Why: frames are the only part of the data that grows without bound, and a
   # local directory cannot be shared, so a second backend replica would serve
   # 404s for half the frames. Ceph replicates and scrubs the objects itself and
-  # grows by adding OSDs, and its RADOS Gateway speaks S3, which is the API the
-  # backend already uses.
-  #
-  # This is the upstream all-in-one demo image: one container running mon, mgr,
-  # osd and rgw. It is meant for development and for trying the S3 path — a real
-  # deployment runs a Ceph cluster of its own and only needs SIGHTPANE_S3_* pointed at
-  # its gateway. MinIO or AWS S3 work through the same settings.
+  # grows by adding OSDs, and its RADOS Gateway speaks S3.
   ceph:
     image: quay.io/ceph/demo:latest
     container_name: sightpane-ceph
-    profiles: [ "ceph" ]
+    hostname: ceph
     environment:
       # A single-node demo cluster: one monitor, one OSD, no redundancy.
+      MON_NAME: ceph
       MON_IP: 127.0.0.1
       CEPH_PUBLIC_NETWORK: 0.0.0.0/0
       CEPH_DEMO_UID: hog
@@ -109,6 +106,7 @@ services:
       RGW_NAME: localhost
       RGW_FRONTEND_PORT: "8080"
       DEMO_DAEMONS: "mon,mgr,osd,rgw"
+      CEPH_ARGS: "--mon-data-avail-crit=0 --mon-data-avail-warn=1 --rgw-dns-name=localhost,ceph"
     ports:
       - "8080:8080" # RADOS Gateway (S3)
     volumes:
@@ -121,34 +119,13 @@ services:
       # The gateway answering at all is enough; an anonymous list is a 403,
       # which still proves it is up and signing requests.
       test: [ "CMD-SHELL", "curl -sf -o /dev/null -w '%{http_code}' http://127.0.0.1:8080/ | grep -qE '200|403'" ]
-      interval: 10s
+      interval: 5s
       timeout: 5s
       retries: 30
-      start_period: 60s
-
-  minio:
-    image: minio/minio:latest
-    container_name: sightpane-minio
-    profiles: [ "minio" ]
-    command: server /data --console-address ":9001"
-    environment:
-      MINIO_ROOT_USER: minioadmin
-      MINIO_ROOT_PASSWORD: minioadminpassword
-    ports:
-      - "9000:9000"
-      - "9001:9001"
-    volumes:
-      - minio-data:/data
-    restart: unless-stopped
-    healthcheck:
-      test: [ "CMD-SHELL", "curl -sf http://127.0.0.1:9000/minio/health/live || exit 1" ]
-      interval: 10s
-      timeout: 5s
-      retries: 5
+      start_period: 30s
 
 volumes:
   sightpane-data:
   pg-data:
   ceph-etc:
   ceph-lib:
-  minio-data:
