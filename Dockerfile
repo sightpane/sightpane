@@ -35,6 +35,22 @@ RUN mkdir -p /out && if [ "$UI_REF" != "none" ]; then \
       cp -a build/web/. /out/; \
     fi
 
+# 1b) The browser SDK for script-tag users: github.com/sightpane/ts-sdk built
+#     with tsup into one IIFE file, served by the binary at /js/sightpane.js.
+#     The default is `none` until that repository is public; docker-compose.yml
+#     mounts a local `../ts-sdk/dist/sightpane.js` instead, the same way it
+#     mounts a local dashboard build. Without either the path answers 404.
+FROM node:22-alpine AS sdk
+ARG SDK_REPO=https://github.com/sightpane/ts-sdk.git
+ARG SDK_REF=none
+RUN apk add --no-cache git
+WORKDIR /src
+RUN mkdir -p /out && if [ "$SDK_REF" != "none" ]; then \
+      git clone --depth 1 --branch "$SDK_REF" "$SDK_REPO" sdk && \
+      cd sdk && npm ci --ignore-scripts && npm run build && \
+      cp dist/sightpane.js /out/; \
+    fi
+
 # 2) The backend: Go with cgo off, which pgx allows because it is pure Go, and
 #    which is what lets the binary run on the bare alpine below.
 FROM golang:1.26-alpine AS backend
@@ -55,9 +71,11 @@ RUN apk add --no-cache ca-certificates tzdata
 WORKDIR /app
 COPY --from=backend /sightpane /usr/local/bin/sightpane
 COPY --from=dashboard /out /app/ui
+COPY --from=sdk /out /app/sdk
 ENV SIGHTPANE_ADDR=:8790 \
     SIGHTPANE_DATA=/data \
     SIGHTPANE_UI_DIR=/app/ui \
+    SIGHTPANE_SDK_JS=/app/sdk/sightpane.js \
     SIGHTPANE_DEFAULT_PROJECT=default \
     SIGHTPANE_DEFAULT_KEY=dev \
     SIGHTPANE_ADMIN_EMAIL=admin@sightpane.local \

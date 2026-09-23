@@ -108,7 +108,7 @@ func main() {
 	}
 
 	embedded, _ := fs.Sub(uiFS, "ui")
-	app := server.New(st, notifier, cfg.UIDir, embedded, cfg.IngestRate)
+	app := server.New(st, notifier, cfg.UIDir, embedded, cfg.SDKJS, cfg.IngestRate)
 
 	log.Printf("sightpane listening on %s (db %s, data %s, frames %s, project %q key %q, admin %s, proxy_protocol=%v, retention=%dd, ingest_rate=%d/min)",
 		cfg.Addr, st.Driver(), cfg.DataDir, st.Frames(), cfg.DefaultProject, cfg.DefaultKey, cfg.AdminEmail, cfg.ProxyProtocol, cfg.RetentionDays, cfg.IngestRate)

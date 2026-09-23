@@ -75,6 +75,7 @@ no `ALTER` list to keep in step any more.
 | `SIGHTPANE_ADMIN_EMAIL` / `SIGHTPANE_ADMIN_PASSWORD` | `admin@sightpane.local` / `admin123` | admin created on first start (if missing) |
 | `SIGHTPANE_DEFAULT_PROJECT` / `SIGHTPANE_DEFAULT_KEY` | `default` / `dev` | project guaranteed to exist on start; the admin becomes its owner |
 | `SIGHTPANE_UI_DIR` | empty | a Flutter web build; empty serves a small placeholder page |
+| `SIGHTPANE_SDK_JS` | empty | `dist/sightpane.js` from [sightpane/ts-sdk](https://github.com/sightpane/ts-sdk), served at `/js/sightpane.js` for script-tag users; empty makes that path a 404 |
 | `SIGHTPANE_FRAMES` | `fs` | where replay frames live: `fs` (a directory under `SIGHTPANE_DATA`) or `s3` (any S3-compatible object store — Ceph RADOS Gateway, MinIO, AWS S3) |
 | `SIGHTPANE_S3_ENDPOINT` | empty | `host:port`, no scheme, e.g. `ceph-rgw:8080` |
 | `SIGHTPANE_S3_BUCKET` | `sightpane-frames` | created on start if missing |
@@ -346,7 +347,8 @@ official Flutter 3.47.0 tarball (`SIGHTPANE_API_URL` empty → the dashboard cal
 the API on its own origin), a cgo-free Go build, and an `alpine` runtime image
 (~30 MB plus the dashboard). Pin the dashboard with
 `--build-arg UI_REF=v0.2.0`, or leave it out entirely with `UI_REF=none` for an
-API-only image that serves the placeholder page compiled into the binary.
+API-only image that serves the placeholder page compiled into the binary. A
+fourth, small stage builds the browser SDK bundle (see below).
 
 The database lives in the `pg-data` volume and the frame PNGs in `sightpane-data`
 (`/data`). The environment variables are in [`docker-compose.yml`](docker-compose.yml):
@@ -368,6 +370,19 @@ settings.
 On the SDK side, `endpoint` is the container's external address (for example
 `http://sightpane.company.local:8790`) and `apiKey` is the project key from the
 dashboard.
+
+A plain HTML page needs no bundler: the binary serves the browser SDK at
+`/js/sightpane.js` from `SIGHTPANE_SDK_JS`. `docker-compose.yml` mounts
+`../ts-sdk/dist/sightpane.js` (`npm run build` in a checkout of
+[sightpane/ts-sdk](https://github.com/sightpane/ts-sdk)); the `SDK_REF` build
+argument clones and builds it inside the image instead once that repository is
+public.
+The endpoint defaults to the origin the script came from, so one tag is enough:
+
+```html
+<script src="https://sightpane.example.com/js/sightpane.js" data-key="dev" data-replay="true"></script>
+<script>Sightpane.track('page_viewed', { path: location.pathname });</script>
+```
 
 ## Roadmap
 

@@ -47,7 +47,7 @@ func newTestServer(t *testing.T) (*fiber.App, *store.Store) {
 		t.Fatal(err)
 	}
 	userTok, _ = st.IssueToken(u.ID)
-	return New(st, nil, "", nil), st
+	return New(st, nil, "", nil, ""), st
 }
 
 // testStore opens the database one test runs against: a schema of its own inside
@@ -601,6 +601,37 @@ func TestUserLocale(t *testing.T) {
 	}
 }
 
+// /js/sightpane.js is how a plain HTML page gets the SDK: served as
+// JavaScript with a short cache, from the configured file, and a JSON 404 when
+// the deployment has no bundle so a broken tag is diagnosable.
+func TestBrowserSDKIsServedFromConfiguredFile(t *testing.T) {
+	st := testStore(t)
+	path := filepath.Join(t.TempDir(), "sightpane.js")
+	if err := os.WriteFile(path, []byte("var Sightpane=(()=>{})();"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	rr := send(t, New(st, nil, "", nil, path), httptest.NewRequest("GET", "/js/sightpane.js", nil))
+	if rr.Code != 200 || !strings.Contains(rr.Body.String(), "var Sightpane") {
+		t.Fatalf("bundle: %d %q", rr.Code, rr.Body.String())
+	}
+	if ct := rr.Header().Get("Content-Type"); !strings.HasPrefix(ct, "text/javascript") {
+		t.Fatalf("content-type: %q", ct)
+	}
+	if cc := rr.Header().Get("Cache-Control"); !strings.Contains(cc, "max-age=300") {
+		t.Fatalf("cache-control: %q", cc)
+	}
+
+	for name, file := range map[string]string{"unset": "", "missing": filepath.Join(t.TempDir(), "nope.js")} {
+		t.Run(name, func(t *testing.T) {
+			rr := send(t, New(st, nil, "", nil, file), httptest.NewRequest("GET", "/js/sightpane.js", nil))
+			if rr.Code != 404 || !strings.Contains(rr.Body.String(), `"code":"not_found"`) {
+				t.Fatalf("%d %q", rr.Code, rr.Body.String())
+			}
+		})
+	}
+}
+
 // The dashboard is a single-page app: any path that is not a file on disk has
 // to return index.html with 200, or the browser shows an error page instead of
 // letting the client router handle the route. API paths must keep 404ing.
@@ -617,7 +648,7 @@ func TestDashboardIsServedAsASinglePageApp(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { st.Close() })
-	app := New(st, nil, dir, nil)
+	app := New(st, nil, dir, nil, "")
 
 	for _, c := range []struct {
 		name, path, wantBody string
@@ -1011,7 +1042,7 @@ func TestAlertNotificationsAndDeduplication(t *testing.T) {
 	notifier.Start()
 	defer notifier.Stop()
 
-	h := New(st, notifier, "", nil)
+	h := New(st, notifier, "", nil, "")
 
 	// Create webhook channel pointing to test server
 	rr := post(t, h, "/api/v1/projects/1/alert-channels", "", map[string]any{
@@ -1148,7 +1179,7 @@ func TestAlertRateSpikeAndCooldown(t *testing.T) {
 	notifier := alert.NewNotifier(st, config.Config{
 		PublicURL: "http://localhost:8790",
 	})
-	h := New(st, notifier, "", nil)
+	h := New(st, notifier, "", nil, "")
 
 	// Create webhook channel
 	rr := post(t, h, "/api/v1/projects/1/alert-channels", "", map[string]any{

@@ -1,14 +1,16 @@
 # docker compose up -d --build              →  http://localhost:8790
 # Replay frames are stored in Ceph RADOS Gateway (S3) by default.
 #
-# The build pulls the dashboard from github.com/sightpane/ui; pin it with
-# `UI_REF` below, or set it to `none` for an API-only image.
+# The build pulls the dashboard from github.com/sightpane/ui and the browser
+# SDK from github.com/sightpane/ts-sdk; pin them with `UI_REF` / `SDK_REF`
+# below, or set either to `none` to leave it out.
 services:
   sightpane:
     build:
       context: .
       args:
         UI_REF: "${UI_REF:-main}"
+        SDK_REF: "${SDK_REF:-none}"
     image: ghcr.io/sightpane/sightpane:latest
     container_name: sightpane
     depends_on:
@@ -45,6 +47,9 @@ services:
     volumes:
       - sightpane-data:/data # data directory (when SIGHTPANE_FRAMES=fs or local files)
       - ../ui/build/web:/app/ui:ro
+      # The browser SDK bundle (`npm run build` in a checkout of sightpane/ts-sdk),
+      # served at /js/sightpane.js. Drop this line when SDK_REF builds it.
+      - ../ts-sdk/dist/sightpane.js:/app/sdk/sightpane.js:ro
     restart: unless-stopped
     # For the real client IP: put this behind a reverse proxy that sends
     # X-Forwarded-For / X-Real-IP (the backend reads those headers), or use

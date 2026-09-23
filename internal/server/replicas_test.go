@@ -44,7 +44,7 @@ func TestTwoReplicasShareFrames(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer st1.Close()
-	app1 := New(st1, nil, "", nil)
+	app1 := New(st1, nil, "", nil, "")
 
 	// Replica 2
 	st2, err := store.Open(store.Options{
@@ -56,7 +56,7 @@ func TestTwoReplicasShareFrames(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer st2.Close()
-	app2 := New(st2, nil, "", nil)
+	app2 := New(st2, nil, "", nil, "")
 
 	u, err := st1.CreateUser("shared@x.io", "Shared User", "password123")
 	if err != nil {

@@ -47,6 +47,10 @@ type Config struct {
 
 	// UIDir serves a built dashboard. Empty falls back to the embedded page.
 	UIDir string
+	// SDKJS is the script-tag build of the browser SDK (dist/sightpane.js from
+	// sightpane/ts-sdk), served at /js/sightpane.js so a plain HTML page can
+	// load the SDK from the backend itself. Empty makes that path a 404.
+	SDKJS string
 
 	// Frames selects where replay frames are kept: "fs" (a directory under
 	// DataDir) or "s3" (any S3-compatible object store). "s3" is what a Ceph
@@ -109,6 +113,7 @@ func Load() Config {
 		DefaultProject:   env("DEFAULT_PROJECT", "default"),
 		DefaultKey:       env("DEFAULT_KEY", "dev"),
 		UIDir:            env("UI_DIR", ""),
+		SDKJS:            env("SDK_JS", ""),
 		Frames:           env("FRAMES", "fs"),
 		S3: S3Config{
 			Endpoint:  env("S3_ENDPOINT", ""),

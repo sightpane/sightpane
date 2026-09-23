@@ -47,12 +47,15 @@ type Server struct {
 	// ui serves the dashboard: a directory when SIGHTPANE_UI_DIR is set, otherwise
 	// the small embedded placeholder page.
 	ui fiber.Handler
+	// sdkJS is the browser SDK bundle served at /js/sightpane.js; empty → 404.
+	sdkJS string
 }
 
 // New builds the Fiber app. [uiDir] wins when non-empty; [embedded] is the
 // fallback filesystem compiled into the binary. Either may be absent, in which
-// case only the API is served.
-func New(st *store.Store, notifier *alert.Notifier, uiDir string, embedded fs.FS, defaultIngestRate ...int) *fiber.App {
+// case only the API is served. [sdkJS] is the browser SDK file served at
+// /js/sightpane.js, or empty.
+func New(st *store.Store, notifier *alert.Notifier, uiDir string, embedded fs.FS, sdkJS string, defaultIngestRate ...int) *fiber.App {
 	if notifier == nil {
 		notifier = alert.NewNotifier(st, config.Config{PublicURL: "http://localhost:8790"})
 	}
@@ -66,6 +69,7 @@ func New(st *store.Store, notifier *alert.Notifier, uiDir string, embedded fs.FS
 		notifier: notifier,
 		limiter:  NewIngestLimiter(defaultRate),
 		ui:       uiHandler(uiDir, embedded),
+		sdkJS:    sdkJS,
 	}
 
 	app := fiber.New(fiber.Config{
@@ -296,6 +300,10 @@ func New(st *store.Store, notifier *alert.Notifier, uiDir string, embedded fs.FS
 	api.Get("/projects/:id/metric-alerts/preview", s.requireProject(roleViewer), s.getMetricAlertPreview)
 	api.Get("/projects/:id/metric-alerts/incidents", s.requireProject(roleViewer), s.listMetricAlertIncidents)
 	api.Post("/projects/:id/metric-alerts/rules/:ruleId/test", s.requireProject(roleMember), s.testMetricAlertRule)
+
+	// The browser SDK for script-tag users. Before the dashboard, so a UI
+	// build that happens to ship a js/ directory cannot shadow it.
+	app.Get("/js/sightpane.js", s.sdkScript)
 
 	// The dashboard is last so it never shadows an API route.
 	if s.ui != nil {
