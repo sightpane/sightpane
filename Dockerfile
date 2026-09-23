@@ -37,12 +37,10 @@ RUN mkdir -p /out && if [ "$UI_REF" != "none" ]; then \
 
 # 1b) The browser SDK for script-tag users: github.com/sightpane/ts-sdk built
 #     with tsup into one IIFE file, served by the binary at /js/sightpane.js.
-#     The default is `none` until that repository is public; docker-compose.yml
-#     mounts a local `../ts-sdk/dist/sightpane.js` instead, the same way it
-#     mounts a local dashboard build. Without either the path answers 404.
+#     SDK_REF=none skips it and that path answers 404.
 FROM node:22-alpine AS sdk
 ARG SDK_REPO=https://github.com/sightpane/ts-sdk.git
-ARG SDK_REF=none
+ARG SDK_REF=main
 RUN apk add --no-cache git
 WORKDIR /src
 RUN mkdir -p /out && if [ "$SDK_REF" != "none" ]; then \

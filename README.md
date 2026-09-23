@@ -371,12 +371,11 @@ On the SDK side, `endpoint` is the container's external address (for example
 `http://sightpane.company.local:8790`) and `apiKey` is the project key from the
 dashboard.
 
-A plain HTML page needs no bundler: the binary serves the browser SDK at
-`/js/sightpane.js` from `SIGHTPANE_SDK_JS`. `docker-compose.yml` mounts
-`../ts-sdk/dist/sightpane.js` (`npm run build` in a checkout of
-[sightpane/ts-sdk](https://github.com/sightpane/ts-sdk)); the `SDK_REF` build
-argument clones and builds it inside the image instead once that repository is
-public.
+A plain HTML page needs no bundler: the image builds
+[sightpane/ts-sdk](https://github.com/sightpane/ts-sdk) at `SDK_REF` (`none`
+to skip) and the binary serves it at `/js/sightpane.js` from `SIGHTPANE_SDK_JS`.
+Working on the SDK locally, mount its `dist/sightpane.js` over
+`/app/sdk/sightpane.js` the way the dashboard build is mounted.
 The endpoint defaults to the origin the script came from, so one tag is enough:
 
 ```html

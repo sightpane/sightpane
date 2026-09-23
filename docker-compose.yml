@@ -10,7 +10,7 @@ services:
       context: .
       args:
         UI_REF: "${UI_REF:-main}"
-        SDK_REF: "${SDK_REF:-none}"
+        SDK_REF: "${SDK_REF:-main}"
     image: ghcr.io/sightpane/sightpane:latest
     container_name: sightpane
     depends_on:
@@ -47,9 +47,6 @@ services:
     volumes:
       - sightpane-data:/data # data directory (when SIGHTPANE_FRAMES=fs or local files)
       - ../ui/build/web:/app/ui:ro
-      # The browser SDK bundle (`npm run build` in a checkout of sightpane/ts-sdk),
-      # served at /js/sightpane.js. Drop this line when SDK_REF builds it.
-      - ../ts-sdk/dist/sightpane.js:/app/sdk/sightpane.js:ro
     restart: unless-stopped
     # For the real client IP: put this behind a reverse proxy that sends
     # X-Forwarded-For / X-Real-IP (the backend reads those headers), or use
