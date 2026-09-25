@@ -8,6 +8,8 @@ package server
 import (
 	"encoding/json"
 	"fmt"
+	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"sightpane/internal/store"
@@ -282,5 +284,18 @@ func TestSurveyPartialUpdateKeepsTheRest(t *testing.T) {
 	get(t, app, path, &cleared)
 	if cleared.Description != "" || cleared.Targeting.URLPattern != "" {
 		t.Fatalf("after clearing: %+v", cleared)
+	}
+}
+
+// The dashboard updates a survey with PUT; from another origin the browser asks
+// first, and a preflight that does not list PUT blocks the request.
+func TestCORSPreflightAllowsPut(t *testing.T) {
+	app, _ := newTestServer(t)
+	req := httptest.NewRequest("OPTIONS", "/api/v1/projects/1/surveys/1", nil)
+	req.Header.Set("Origin", "http://localhost:5000")
+	req.Header.Set("Access-Control-Request-Method", "PUT")
+	rr := send(t, app, req)
+	if rr.Code != 204 || !strings.Contains(rr.Header().Get("Access-Control-Allow-Methods"), "PUT") {
+		t.Fatalf("preflight: %d allow-methods=%q", rr.Code, rr.Header().Get("Access-Control-Allow-Methods"))
 	}
 }
