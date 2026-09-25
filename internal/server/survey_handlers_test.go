@@ -8,6 +8,8 @@ package server
 import (
 	"encoding/json"
 	"fmt"
+	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"sightpane/internal/store"
@@ -182,5 +184,148 @@ func TestSurveysEndpoints(t *testing.T) {
 	rrDel := do(t, app, "DELETE", fmt.Sprintf("/api/v1/projects/%d/surveys/%d", projID, csatSurvey.ID), "", nil)
 	if rrDel.Code != 204 {
 		t.Fatalf("DELETE survey: expected 204, got %d", rrDel.Code)
+	}
+}
+
+// The SDK shows a survey as soon as it has fetched it, while the session row
+// only exists once the first envelope arrives — seconds later. An answer given
+// in between used to hit the foreign key and come back 500, losing it. It is
+// now kept, linked to its session when that session is already there, and
+// never to another project's session.
+func TestSurveyAnswerBeforeItsSessionArrives(t *testing.T) {
+	app, st := newTestServer(t)
+	p, err := st.ProjectByID(1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	other, err := st.CreateProject("Other", "web", "other_key", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rr := post(t, app, "/api/v1/projects/1/surveys", "", map[string]any{
+		"name": "Early", "type": "nps", "question": "How likely?", "active": true,
+	})
+	if rr.Code != 201 {
+		t.Fatalf("create survey: %d %s", rr.Code, rr.Body.String())
+	}
+	var survey store.Survey
+	_ = json.Unmarshal(rr.Body.Bytes(), &survey)
+
+	envelope := func(key, session string) {
+		t.Helper()
+		rr := post(t, app, "/api/v1/envelope", key, map[string]any{
+			"sdk":     map[string]any{"name": "sightpane", "version": "0.1.0"},
+			"session": map[string]any{"id": session},
+			"items":   []any{map[string]any{"type": "heartbeat", "route": "/"}},
+		})
+		if rr.Code != 202 {
+			t.Fatalf("envelope: %d %s", rr.Code, rr.Body.String())
+		}
+	}
+	answer := func(session string) *string {
+		t.Helper()
+		rr := post(t, app, fmt.Sprintf("/api/v1/surveys/%d/responses", survey.ID), p.APIKey, map[string]any{
+			"session_id": session, "user_id": "u1", "score": 9,
+		})
+		if rr.Code != 201 {
+			t.Fatalf("answer for %s: %d %s", session, rr.Code, rr.Body.String())
+		}
+		var saved store.SurveyResponse
+		_ = json.Unmarshal(rr.Body.Bytes(), &saved)
+		return saved.SessionID
+	}
+
+	if got := answer("not-ingested-yet"); got != nil {
+		t.Errorf("early answer linked to %q, want no session", *got)
+	}
+	envelope(p.APIKey, "arrived")
+	if got := answer("arrived"); got == nil || *got != "arrived" {
+		t.Errorf("answer after the envelope: session %v, want arrived", got)
+	}
+	envelope(other.APIKey, "elsewhere")
+	if got := answer("elsewhere"); got != nil {
+		t.Errorf("answer linked to another project's session %q", *got)
+	}
+}
+
+// The dashboard's Active switch sends `{"active": false}` alone. That must not
+// wipe the targeting and description, or a survey aimed at one page starts
+// showing on every page the moment it is switched back on.
+func TestSurveyPartialUpdateKeepsTheRest(t *testing.T) {
+	app, _ := newTestServer(t)
+	rr := post(t, app, "/api/v1/projects/1/surveys", "", map[string]any{
+		"name": "Checkout", "type": "csat", "question": "Happy?",
+		"description": "after paying",
+		"targeting":   map[string]any{"url_pattern": "/checkout/*", "event_trigger": "purchase"},
+		"active":      true,
+	})
+	if rr.Code != 201 {
+		t.Fatalf("create: %d %s", rr.Code, rr.Body.String())
+	}
+	var survey store.Survey
+	_ = json.Unmarshal(rr.Body.Bytes(), &survey)
+	path := fmt.Sprintf("/api/v1/projects/1/surveys/%d", survey.ID)
+
+	if rr := put(t, app, path, "", map[string]any{"active": false}); rr.Code != 200 {
+		t.Fatalf("toggle: %d %s", rr.Code, rr.Body.String())
+	}
+	var got store.Survey
+	get(t, app, path, &got)
+	if got.Active || got.Description != "after paying" ||
+		got.Targeting.URLPattern != "/checkout/*" || got.Targeting.EventTrigger != "purchase" {
+		t.Fatalf("after toggling off: %+v", got)
+	}
+
+	// Sending a field still changes it, including to empty.
+	if rr := put(t, app, path, "", map[string]any{"description": "", "targeting": map[string]any{}}); rr.Code != 200 {
+		t.Fatalf("clear: %d %s", rr.Code, rr.Body.String())
+	}
+	var cleared store.Survey
+	get(t, app, path, &cleared)
+	if cleared.Description != "" || cleared.Targeting.URLPattern != "" {
+		t.Fatalf("after clearing: %+v", cleared)
+	}
+}
+
+// The dashboard updates a survey with PUT; from another origin the browser asks
+// first, and a preflight that does not list PUT blocks the request.
+func TestCORSPreflightAllowsPut(t *testing.T) {
+	app, _ := newTestServer(t)
+	req := httptest.NewRequest("OPTIONS", "/api/v1/projects/1/surveys/1", nil)
+	req.Header.Set("Origin", "http://localhost:5000")
+	req.Header.Set("Access-Control-Request-Method", "PUT")
+	rr := send(t, app, req)
+	if rr.Code != 204 || !strings.Contains(rr.Header().Get("Access-Control-Allow-Methods"), "PUT") {
+		t.Fatalf("preflight: %d allow-methods=%q", rr.Code, rr.Header().Get("Access-Control-Allow-Methods"))
+	}
+}
+
+// An SDK posting an answer without a Content-Type header must not have it
+// parsed as a form and stored empty (the trap c.Bind().Body() sets; see
+// TestJSONBodyWithoutContentType).
+func TestSurveyAnswerWithoutContentType(t *testing.T) {
+	app, st := newTestServer(t)
+	p, err := st.ProjectByID(1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rr := post(t, app, "/api/v1/projects/1/surveys", "", map[string]any{
+		"name": "Bare", "type": "open_text", "question": "Anything?", "active": true,
+	})
+	var survey store.Survey
+	_ = json.Unmarshal(rr.Body.Bytes(), &survey)
+
+	req := httptest.NewRequest("POST", fmt.Sprintf("/api/v1/surveys/%d/responses", survey.ID),
+		strings.NewReader(`{"user_id":"u1","score":7,"response_text":"fine"}`))
+	req.Header.Del("Content-Type")
+	req.Header.Set("X-Sightpane-Key", p.APIKey)
+	rr = send(t, app, req)
+	if rr.Code != 201 {
+		t.Fatalf("answer: %d %s", rr.Code, rr.Body.String())
+	}
+	var saved store.SurveyResponse
+	_ = json.Unmarshal(rr.Body.Bytes(), &saved)
+	if saved.Score == nil || *saved.Score != 7 || saved.ResponseText != "fine" || saved.UserID != "u1" {
+		t.Fatalf("stored %+v, want score 7, text fine, user u1", saved)
 	}
 }

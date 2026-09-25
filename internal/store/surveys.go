@@ -273,16 +273,25 @@ func (s *Store) SubmitSurveyResponse(resp *SurveyResponse) (*SurveyResponse, err
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
+	// The SDK can show a survey before its first envelope has created the
+	// session row, so the answer links to the session only when that row is
+	// already there — in this project — and is kept unlinked otherwise rather
+	// than refused by the foreign key.
 	now := time.Now()
+	var session sql.NullString
 	err := s.db.QueryRowContext(ctx, `
 		INSERT INTO survey_responses (survey_id, project_id, session_id, user_id, score, response_text, created_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7)
-		RETURNING id, created_at
+		VALUES ($1, $2, (SELECT id FROM sessions WHERE id = $3 AND project_id = $2), $4, $5, $6, $7)
+		RETURNING id, created_at, session_id
 	`, resp.SurveyID, resp.ProjectID, resp.SessionID, resp.UserID, resp.Score, resp.ResponseText, now).Scan(
-		&resp.ID, &resp.CreatedAt,
+		&resp.ID, &resp.CreatedAt, &session,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("submit survey response: %w", err)
+	}
+	resp.SessionID = nil
+	if session.Valid {
+		resp.SessionID = &session.String
 	}
 	return resp, nil
 }

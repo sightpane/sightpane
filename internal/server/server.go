@@ -91,7 +91,7 @@ func New(st *store.Store, notifier *alert.Notifier, uiDir string, embedded fs.FS
 		AllowOrigins: []string{"*"},
 		AllowHeaders: []string{"Content-Type", "X-Sightpane-Key", "X-Hog-Key", "Authorization"},
 		AllowMethods: []string{
-			fiber.MethodGet, fiber.MethodPost, fiber.MethodPatch,
+			fiber.MethodGet, fiber.MethodPost, fiber.MethodPut, fiber.MethodPatch,
 			fiber.MethodDelete, fiber.MethodOptions,
 		},
 	}))
