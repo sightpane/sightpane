@@ -209,6 +209,14 @@ func EnrichDeviceJSON(raw string) (string, ParsedDevice) {
 		}
 	}
 
+	// An iPhone reports "iPhone17,3", not the name on the box. A name the SDK
+	// found itself (Android's marketing name) wins.
+	if getStr("model_name") == "" {
+		if name, ok := appleModelNames[getStr("model")]; ok {
+			m["model_name"] = name
+		}
+	}
+
 	b, err := json.Marshal(m)
 	resJSON := raw
 	if err == nil {
