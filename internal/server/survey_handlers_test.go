@@ -299,3 +299,33 @@ func TestCORSPreflightAllowsPut(t *testing.T) {
 		t.Fatalf("preflight: %d allow-methods=%q", rr.Code, rr.Header().Get("Access-Control-Allow-Methods"))
 	}
 }
+
+// An SDK posting an answer without a Content-Type header must not have it
+// parsed as a form and stored empty (the trap c.Bind().Body() sets; see
+// TestJSONBodyWithoutContentType).
+func TestSurveyAnswerWithoutContentType(t *testing.T) {
+	app, st := newTestServer(t)
+	p, err := st.ProjectByID(1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rr := post(t, app, "/api/v1/projects/1/surveys", "", map[string]any{
+		"name": "Bare", "type": "open_text", "question": "Anything?", "active": true,
+	})
+	var survey store.Survey
+	_ = json.Unmarshal(rr.Body.Bytes(), &survey)
+
+	req := httptest.NewRequest("POST", fmt.Sprintf("/api/v1/surveys/%d/responses", survey.ID),
+		strings.NewReader(`{"user_id":"u1","score":7,"response_text":"fine"}`))
+	req.Header.Del("Content-Type")
+	req.Header.Set("X-Sightpane-Key", p.APIKey)
+	rr = send(t, app, req)
+	if rr.Code != 201 {
+		t.Fatalf("answer: %d %s", rr.Code, rr.Body.String())
+	}
+	var saved store.SurveyResponse
+	_ = json.Unmarshal(rr.Body.Bytes(), &saved)
+	if saved.Score == nil || *saved.Score != 7 || saved.ResponseText != "fine" || saved.UserID != "u1" {
+		t.Fatalf("stored %+v, want score 7, text fine, user u1", saved)
+	}
+}

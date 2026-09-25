@@ -133,7 +133,7 @@ func (s *Server) submitSurveyResponse(c fiber.Ctx) error {
 	}
 
 	var req submitSurveyResponseRequest
-	if err := c.Bind().Body(&req); err != nil {
+	if err := c.Bind().JSON(&req); err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid request body"})
 	}
 
@@ -204,7 +204,7 @@ func (s *Server) createSurvey(c fiber.Ctx) error {
 	}
 
 	var req createSurveyRequest
-	if err := c.Bind().Body(&req); err != nil {
+	if err := c.Bind().JSON(&req); err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid request body"})
 	}
 
@@ -259,7 +259,7 @@ func (s *Server) updateSurvey(c fiber.Ctx) error {
 	}
 
 	var req updateSurveyRequest
-	if err := c.Bind().Body(&req); err != nil {
+	if err := c.Bind().JSON(&req); err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid request body"})
 	}
 
