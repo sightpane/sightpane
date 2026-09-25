@@ -234,8 +234,8 @@ func (s *Store) Ingest(ctx context.Context, projectID int64, env *Envelope, ip s
 	}
 	defer tx.Rollback()
 
-	_, err = tx.Exec(`INSERT INTO sessions(id, project_id, started_at, last_seen_at, user_id, user_json, device_json, props_json, platform, release, ip, browser, visitor_key, current_route, sdk_name, sdk_version, app_type, os, os_version, country_code, country_name, region, city, latitude, longitude)
-		VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25)
+	_, err = tx.Exec(`INSERT INTO sessions(id, project_id, started_at, last_seen_at, user_id, user_json, device_json, props_json, platform, release, ip, browser, visitor_key, current_route, sdk_name, sdk_version, app_type, os, os_version, country_code, country_name, region, city, latitude, longitude, platform_category)
+		VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$27)
 		ON CONFLICT(id) DO UPDATE SET last_seen_at=excluded.last_seen_at, user_id=excluded.user_id, user_json=excluded.user_json,
 		  device_json=excluded.device_json, props_json=excluded.props_json, platform=excluded.platform, release=excluded.release,
 		  ip=CASE WHEN $26='none' THEN '' WHEN excluded.ip='' THEN sessions.ip ELSE excluded.ip END,
@@ -244,6 +244,7 @@ func (s *Store) Ingest(ctx context.Context, projectID int64, env *Envelope, ip s
 		  sdk_name=CASE WHEN excluded.sdk_name!='' THEN excluded.sdk_name ELSE sessions.sdk_name END,
 		  sdk_version=CASE WHEN excluded.sdk_version!='' THEN excluded.sdk_version ELSE sessions.sdk_version END,
 		  app_type=CASE WHEN excluded.app_type!='' THEN excluded.app_type ELSE sessions.app_type END,
+		  platform_category=CASE WHEN excluded.platform_category!='' THEN excluded.platform_category ELSE sessions.platform_category END,
 		  os=CASE WHEN excluded.os!='' THEN excluded.os ELSE sessions.os END,
 		  os_version=CASE WHEN excluded.os_version!='' THEN excluded.os_version ELSE sessions.os_version END,
 		  country_code=CASE WHEN excluded.country_code!='' THEN excluded.country_code ELSE sessions.country_code END,
@@ -252,7 +253,7 @@ func (s *Store) Ingest(ctx context.Context, projectID int64, env *Envelope, ip s
 		  city=CASE WHEN excluded.city!='' THEN excluded.city ELSE sessions.city END,
 		  latitude=COALESCE(excluded.latitude, sessions.latitude),
 		  longitude=COALESCE(excluded.longitude, sessions.longitude)`,
-		env.Session.ID, projectID, started, now, userID, userJSON, deviceJSON, propsJSON, d.Platform, d.Release, ip, browser, visitor, route, env.SDK.Name, env.SDK.Version, d.AppType, d.OS, d.OSVersion, countryCode, countryName, region, city, lat, lon, storeIP)
+		env.Session.ID, projectID, started, now, userID, userJSON, deviceJSON, propsJSON, d.Platform, d.Release, ip, browser, visitor, route, env.SDK.Name, env.SDK.Version, d.AppType, d.OS, d.OSVersion, countryCode, countryName, region, city, lat, lon, storeIP, d.PlatformCategory)
 	if err != nil {
 		return nil, err
 	}

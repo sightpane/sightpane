@@ -157,3 +157,70 @@ func TestSearchExecution(t *testing.T) {
 
 	_ = ctx
 }
+
+// The session columns holding JSON are TEXT, so a filter that reads a field out
+// of one has to cast it first; without the cast Postgres rejects the whole query
+// with "operator does not exist: text ->> unknown" (SQLSTATE 42883). Every such
+// filter runs against the database here, because the SQL text alone cannot show
+// the missing cast.
+func TestSearchJSONColumnFilters(t *testing.T) {
+	st, err := Open(Options{DSN: testdb.DSN(t), DataDir: t.TempDir()})
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	defer st.Close()
+
+	admin, err := st.CreateUser("admin@sightpane.local", "Admin", "password123")
+	if err != nil {
+		t.Fatalf("CreateUser: %v", err)
+	}
+	proj, err := st.CreateProject("JSON Filters", "web", "", &admin.ID)
+	if err != nil {
+		t.Fatalf("CreateProject: %v", err)
+	}
+
+	now := time.Now().UTC()
+	// platform_category is the column ingest fills from the device; category:
+	// reads it rather than the JSON.
+	insert := func(id, userID, user, device, category string) {
+		t.Helper()
+		if _, err := st.db.Exec(`INSERT INTO sessions(id, project_id, started_at, last_seen_at, user_id, user_json, device_json, platform_category)
+			VALUES($1, $2, $3, $3, $4, $5, $6, $7)`, id, proj.ID, now, userID, user, device, category); err != nil {
+			t.Fatalf("insert %s: %v", id, err)
+		}
+	}
+	insert("mobile", "6a3b3a64edece80ecf272d15",
+		`{"id":"6a3b3a64edece80ecf272d15","email":"mustafa@privaterelay.appleid.com","name":"Mustafa Us"}`,
+		`{"platform":"ios","platform_category":"mobile","os":"iOS","arch":"arm64"}`, "mobile")
+	insert("desktop", "",
+		`{}`,
+		`{"platform":"linux","platform_category":"desktop","os":"Ubuntu","arch":"x86_64","kernel":"Linux","browser_version":"128.0"}`, "desktop")
+
+	for _, tc := range []struct {
+		query string
+		want  string
+	}{
+		{"user:6a3b3a64edece80ecf272d15", "mobile"},
+		{"user:privaterelay", "mobile"},
+		{"user:Mustafa", "mobile"},
+		{"category:mobile", "mobile"},
+		{"os:ubuntu", "desktop"},
+		{"kernel:linux", "desktop"},
+		{"browser_version:128", "desktop"},
+		{"arch:x86_64", "desktop"},
+	} {
+		t.Run(tc.query, func(t *testing.T) {
+			res, err := st.ListSessions(SessionFilter{ProjectID: proj.ID, Query: tc.query})
+			if err != nil {
+				t.Fatalf("ListSessions(%q): %v", tc.query, err)
+			}
+			if len(res) != 1 || res[0].ID != tc.want {
+				ids := []string{}
+				for _, s := range res {
+					ids = append(ids, s.ID)
+				}
+				t.Fatalf("ListSessions(%q) = %v, want [%s]", tc.query, ids, tc.want)
+			}
+		})
+	}
+}

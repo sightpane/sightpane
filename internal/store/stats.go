@@ -66,7 +66,7 @@ func (s *Store) Stats(projectID int64, days int) (*ProjectStats, error) {
 	// Every query below takes the same two parameters in the same order, which
 	// is what lets fill and nameCounts stay one-liners.
 	from := since
-	row := s.db.QueryRow(`SELECT COUNT(*), COUNT(DISTINCT visitor_key), COALESCE(SUM(frame_count),0), COALESCE(SUM(CASE WHEN error_count=0 THEN 1 ELSE 0 END),0) FROM sessions WHERE project_id=$1 AND started_at>=$2`, projectID, from)
+	row := s.db.QueryRow(`SELECT COUNT(*), COUNT(DISTINCT visitor_key), COALESCE(SUM(frame_count),0), COALESCE(SUM(CASE WHEN error_count=0 THEN 1 ELSE 0 END),0) FROM sessions WHERE project_id=$1 AND started_at>=$2 AND `+visitsOnly, projectID, from)
 	var crashFreeSessions int
 	if err := row.Scan(&st.Sessions, &st.Users, &st.Frames, &crashFreeSessions); err != nil {
 		return nil, err
@@ -115,10 +115,10 @@ func (s *Store) Stats(projectID int64, days int) (*ProjectStats, error) {
 	// is small, and a distinct count of visitor keys is not something a
 	// continuous aggregate can hold.
 	day := utcDay("started_at")
-	if err := fill(`SELECT `+day+`, COUNT(*) FROM sessions WHERE project_id=$1 AND started_at>=$2 GROUP BY 1`, func(d *DayStat, n int) { d.Sessions = n }); err != nil {
+	if err := fill(`SELECT `+day+`, COUNT(*) FROM sessions WHERE project_id=$1 AND started_at>=$2 AND `+visitsOnly+` GROUP BY 1`, func(d *DayStat, n int) { d.Sessions = n }); err != nil {
 		return nil, err
 	}
-	if err := fill(`SELECT `+day+`, COUNT(DISTINCT visitor_key) FROM sessions WHERE project_id=$1 AND started_at>=$2 GROUP BY 1`, func(d *DayStat, n int) { d.Users = n }); err != nil {
+	if err := fill(`SELECT `+day+`, COUNT(DISTINCT visitor_key) FROM sessions WHERE project_id=$1 AND started_at>=$2 AND `+visitsOnly+` GROUP BY 1`, func(d *DayStat, n int) { d.Users = n }); err != nil {
 		return nil, err
 	}
 	if err := fill(itemsPerDay("error"), func(d *DayStat, n int) { d.Errors = n }); err != nil {
@@ -144,16 +144,16 @@ func (s *Store) Stats(projectID int64, days int) (*ProjectStats, error) {
 		return out, rows.Err()
 	}
 	var err error
-	if st.Platforms, err = nameCounts(`SELECT COALESCE(NULLIF(platform,''),'?'), COUNT(*) FROM sessions WHERE project_id=$1 AND started_at>=$2 GROUP BY 1 ORDER BY 2 DESC`); err != nil {
+	if st.Platforms, err = nameCounts(`SELECT COALESCE(NULLIF(platform,''),'?'), COUNT(*) FROM sessions WHERE project_id=$1 AND started_at>=$2 AND ` + visitsOnly + ` GROUP BY 1 ORDER BY 2 DESC`); err != nil {
 		return nil, err
 	}
-	if st.AppTypes, err = nameCounts(`SELECT COALESCE(NULLIF(app_type,''),'?'), COUNT(*) FROM sessions WHERE project_id=$1 AND started_at>=$2 GROUP BY 1 ORDER BY 2 DESC`); err != nil {
+	if st.AppTypes, err = nameCounts(`SELECT COALESCE(NULLIF(app_type,''),'?'), COUNT(*) FROM sessions WHERE project_id=$1 AND started_at>=$2 AND ` + visitsOnly + ` GROUP BY 1 ORDER BY 2 DESC`); err != nil {
 		return nil, err
 	}
-	if st.OSs, err = nameCounts(`SELECT COALESCE(NULLIF(os,''),'?'), COUNT(*) FROM sessions WHERE project_id=$1 AND started_at>=$2 GROUP BY 1 ORDER BY 2 DESC LIMIT 8`); err != nil {
+	if st.OSs, err = nameCounts(`SELECT COALESCE(NULLIF(os,''),'?'), COUNT(*) FROM sessions WHERE project_id=$1 AND started_at>=$2 AND ` + visitsOnly + ` GROUP BY 1 ORDER BY 2 DESC LIMIT 8`); err != nil {
 		return nil, err
 	}
-	if st.Releases, err = nameCounts(`SELECT COALESCE(NULLIF(release,''),'?'), COUNT(*) FROM sessions WHERE project_id=$1 AND started_at>=$2 GROUP BY 1 ORDER BY 2 DESC LIMIT 8`); err != nil {
+	if st.Releases, err = nameCounts(`SELECT COALESCE(NULLIF(release,''),'?'), COUNT(*) FROM sessions WHERE project_id=$1 AND started_at>=$2 AND ` + visitsOnly + ` GROUP BY 1 ORDER BY 2 DESC LIMIT 8`); err != nil {
 		return nil, err
 	}
 	if st.TopEvents, err = nameCounts(topItemNames("event", 8)); err != nil {

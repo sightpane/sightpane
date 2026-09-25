@@ -68,3 +68,33 @@ func TestBuildSessionSearchWhereWithDevice(t *testing.T) {
 		t.Fatal("expected non-empty where clause")
 	}
 }
+
+// An iPhone reports its model identifier ("iPhone17,3"), not the name on the
+// box, so ingest adds `model_name`. An identifier the table does not know yet
+// stays as it came, and a name the SDK found itself (Android's marketing name)
+// is left alone.
+func TestEnrichDeviceJSONNamesAppleModels(t *testing.T) {
+	modelName := func(raw string) any {
+		t.Helper()
+		out, _ := store.EnrichDeviceJSON(raw)
+		var m map[string]any
+		if err := json.Unmarshal([]byte(out), &m); err != nil {
+			t.Fatalf("enriched json: %v", err)
+		}
+		return m["model_name"]
+	}
+	for _, tc := range []struct {
+		raw  string
+		want any
+	}{
+		{`{"platform":"iOS","manufacturer":"Apple","model":"iPhone17,3"}`, "iPhone 16"},
+		{`{"platform":"iOS","manufacturer":"Apple","model":"iPhone15,2"}`, "iPhone 14 Pro"},
+		{`{"platform":"iOS","manufacturer":"Apple","model":"iPhone99,1"}`, nil},
+		{`{"platform":"android","manufacturer":"Xiaomi","model":"24072PX77G","model_name":"Xiaomi 14T Pro"}`, "Xiaomi 14T Pro"},
+		{`{"platform":"android","manufacturer":"samsung","model":"SM-S918B"}`, nil},
+	} {
+		if got := modelName(tc.raw); got != tc.want {
+			t.Errorf("model_name for %s = %v, want %v", tc.raw, got, tc.want)
+		}
+	}
+}

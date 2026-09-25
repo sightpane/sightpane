@@ -335,7 +335,7 @@ func (s *Store) EvaluateRateMetrics(projectID int64, windowMinutes int) (int, in
 
 	var sessions, crashFreeSessions int
 	err := s.db.QueryRow(`SELECT COUNT(*), COALESCE(SUM(CASE WHEN error_count=0 THEN 1 ELSE 0 END),0)
-		FROM sessions WHERE project_id=$1 AND started_at>=$2`, projectID, from).Scan(&sessions, &crashFreeSessions)
+		FROM sessions WHERE project_id=$1 AND started_at>=$2 AND `+visitsOnly, projectID, from).Scan(&sessions, &crashFreeSessions)
 	if err != nil {
 		return 0, 0, 0, err
 	}
