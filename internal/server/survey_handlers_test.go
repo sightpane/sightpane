@@ -245,3 +245,42 @@ func TestSurveyAnswerBeforeItsSessionArrives(t *testing.T) {
 		t.Errorf("answer linked to another project's session %q", *got)
 	}
 }
+
+// The dashboard's Active switch sends `{"active": false}` alone. That must not
+// wipe the targeting and description, or a survey aimed at one page starts
+// showing on every page the moment it is switched back on.
+func TestSurveyPartialUpdateKeepsTheRest(t *testing.T) {
+	app, _ := newTestServer(t)
+	rr := post(t, app, "/api/v1/projects/1/surveys", "", map[string]any{
+		"name": "Checkout", "type": "csat", "question": "Happy?",
+		"description": "after paying",
+		"targeting":   map[string]any{"url_pattern": "/checkout/*", "event_trigger": "purchase"},
+		"active":      true,
+	})
+	if rr.Code != 201 {
+		t.Fatalf("create: %d %s", rr.Code, rr.Body.String())
+	}
+	var survey store.Survey
+	_ = json.Unmarshal(rr.Body.Bytes(), &survey)
+	path := fmt.Sprintf("/api/v1/projects/1/surveys/%d", survey.ID)
+
+	if rr := put(t, app, path, "", map[string]any{"active": false}); rr.Code != 200 {
+		t.Fatalf("toggle: %d %s", rr.Code, rr.Body.String())
+	}
+	var got store.Survey
+	get(t, app, path, &got)
+	if got.Active || got.Description != "after paying" ||
+		got.Targeting.URLPattern != "/checkout/*" || got.Targeting.EventTrigger != "purchase" {
+		t.Fatalf("after toggling off: %+v", got)
+	}
+
+	// Sending a field still changes it, including to empty.
+	if rr := put(t, app, path, "", map[string]any{"description": "", "targeting": map[string]any{}}); rr.Code != 200 {
+		t.Fatalf("clear: %d %s", rr.Code, rr.Body.String())
+	}
+	var cleared store.Survey
+	get(t, app, path, &cleared)
+	if cleared.Description != "" || cleared.Targeting.URLPattern != "" {
+		t.Fatalf("after clearing: %+v", cleared)
+	}
+}

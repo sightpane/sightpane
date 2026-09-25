@@ -26,14 +26,17 @@ type createSurveyRequest struct {
 	Active      *bool                 `json:"active"`
 }
 
+// updateSurveyRequest changes only the fields it carries: the dashboard's
+// Active switch sends `{"active": …}` alone. Description and targeting are
+// pointers because empty is a value someone can mean.
 type updateSurveyRequest struct {
-	Name        string                `json:"name"`
-	Type        string                `json:"type"`
-	Question    string                `json:"question"`
-	Description string                `json:"description"`
-	Choices     []string              `json:"choices"`
-	Targeting   store.SurveyTargeting `json:"targeting"`
-	Active      *bool                 `json:"active"`
+	Name        string                 `json:"name"`
+	Type        string                 `json:"type"`
+	Question    string                 `json:"question"`
+	Description *string                `json:"description"`
+	Choices     []string               `json:"choices"`
+	Targeting   *store.SurveyTargeting `json:"targeting"`
+	Active      *bool                  `json:"active"`
 }
 
 type submitSurveyResponseRequest struct {
@@ -283,11 +286,15 @@ func (s *Server) updateSurvey(c fiber.Ctx) error {
 	if req.Question != "" {
 		existing.Question = strings.TrimSpace(req.Question)
 	}
-	existing.Description = strings.TrimSpace(req.Description)
+	if req.Description != nil {
+		existing.Description = strings.TrimSpace(*req.Description)
+	}
 	if req.Choices != nil {
 		existing.Choices = req.Choices
 	}
-	existing.Targeting = req.Targeting
+	if req.Targeting != nil {
+		existing.Targeting = *req.Targeting
+	}
 	if req.Active != nil {
 		existing.Active = *req.Active
 	}
