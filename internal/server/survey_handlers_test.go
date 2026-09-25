@@ -184,3 +184,64 @@ func TestSurveysEndpoints(t *testing.T) {
 		t.Fatalf("DELETE survey: expected 204, got %d", rrDel.Code)
 	}
 }
+
+// The SDK shows a survey as soon as it has fetched it, while the session row
+// only exists once the first envelope arrives — seconds later. An answer given
+// in between used to hit the foreign key and come back 500, losing it. It is
+// now kept, linked to its session when that session is already there, and
+// never to another project's session.
+func TestSurveyAnswerBeforeItsSessionArrives(t *testing.T) {
+	app, st := newTestServer(t)
+	p, err := st.ProjectByID(1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	other, err := st.CreateProject("Other", "web", "other_key", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rr := post(t, app, "/api/v1/projects/1/surveys", "", map[string]any{
+		"name": "Early", "type": "nps", "question": "How likely?", "active": true,
+	})
+	if rr.Code != 201 {
+		t.Fatalf("create survey: %d %s", rr.Code, rr.Body.String())
+	}
+	var survey store.Survey
+	_ = json.Unmarshal(rr.Body.Bytes(), &survey)
+
+	envelope := func(key, session string) {
+		t.Helper()
+		rr := post(t, app, "/api/v1/envelope", key, map[string]any{
+			"sdk":     map[string]any{"name": "sightpane", "version": "0.1.0"},
+			"session": map[string]any{"id": session},
+			"items":   []any{map[string]any{"type": "heartbeat", "route": "/"}},
+		})
+		if rr.Code != 202 {
+			t.Fatalf("envelope: %d %s", rr.Code, rr.Body.String())
+		}
+	}
+	answer := func(session string) *string {
+		t.Helper()
+		rr := post(t, app, fmt.Sprintf("/api/v1/surveys/%d/responses", survey.ID), p.APIKey, map[string]any{
+			"session_id": session, "user_id": "u1", "score": 9,
+		})
+		if rr.Code != 201 {
+			t.Fatalf("answer for %s: %d %s", session, rr.Code, rr.Body.String())
+		}
+		var saved store.SurveyResponse
+		_ = json.Unmarshal(rr.Body.Bytes(), &saved)
+		return saved.SessionID
+	}
+
+	if got := answer("not-ingested-yet"); got != nil {
+		t.Errorf("early answer linked to %q, want no session", *got)
+	}
+	envelope(p.APIKey, "arrived")
+	if got := answer("arrived"); got == nil || *got != "arrived" {
+		t.Errorf("answer after the envelope: session %v, want arrived", got)
+	}
+	envelope(other.APIKey, "elsewhere")
+	if got := answer("elsewhere"); got != nil {
+		t.Errorf("answer linked to another project's session %q", *got)
+	}
+}
