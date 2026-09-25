@@ -156,7 +156,7 @@ func (s *Store) fillProjectCounters(p *Project) {
 	// A rolling 24 hours, not the last calendar day, so this counts raw items:
 	// the daily aggregate cannot answer a window that starts inside a bucket.
 	since := time.Now().UTC().Add(-24 * time.Hour)
-	_ = s.db.QueryRow(`SELECT COUNT(*) FROM sessions WHERE project_id=$1 AND started_at>=$2`, p.ID, since).Scan(&p.Sessions24h)
+	_ = s.db.QueryRow(`SELECT COUNT(*) FROM sessions WHERE project_id=$1 AND started_at>=$2 AND `+visitsOnly, p.ID, since).Scan(&p.Sessions24h)
 	_ = s.db.QueryRow(`SELECT COUNT(*) FROM items WHERE project_id=$1 AND type='error' AND ts>=$2`, p.ID, since).Scan(&p.Errors24h)
 	_ = s.db.QueryRow(`SELECT COUNT(*) FROM issues WHERE project_id=$1 AND NOT resolved`, p.ID).Scan(&p.OpenIssues)
 }

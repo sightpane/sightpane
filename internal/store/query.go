@@ -64,6 +64,12 @@ type SessionFilter struct {
 	Cursor     string
 }
 
+// visitsOnly leaves out the row a server SDK opens for its process (see
+// migrations/postgres/0026_session_platform_category.sql): it is not a visit, so
+// every query that lists or counts sessions ANDs this in. Looking a session up by
+// id, exporting or deleting a user's data, and retention do not.
+const visitsOnly = `platform_category <> 'backend'`
+
 const sessionCols = `id, project_id, started_at, last_seen_at, ended_at, user_id, user_json, device_json, props_json, platform, release, error_count, event_count, frame_count, ip, browser, visitor_key, current_route, sdk_name, sdk_version, app_type, os, os_version, country_code, country_name, region, city, latitude, longitude`
 
 func scanSession(sc interface{ Scan(...any) error }) (*Session, error) {
@@ -84,6 +90,9 @@ func (s *Store) ListSessions(f SessionFilter) ([]Session, error) {
 	next := func(v any) string {
 		args = append(args, v)
 		return "$" + strconv.Itoa(len(args))
+	}
+	if !namesCategory(f.Query) {
+		q += ` AND ` + visitsOnly
 	}
 	if f.UserID != "" {
 		q += ` AND user_id=` + next(f.UserID)
@@ -519,7 +528,7 @@ func (s *Store) Live(projectID int64, window int) (*LiveStatus, error) {
 	}
 	since := time.Now().UTC().Add(-time.Duration(window) * time.Second)
 	rows, err := s.db.Query(`SELECT id, user_id, user_json, ip, browser, platform, current_route, last_seen_at, started_at, visitor_key FROM sessions
-		WHERE project_id=$1 AND last_seen_at>=$2 AND ended_at IS NULL ORDER BY last_seen_at DESC LIMIT 500`, projectID, since)
+		WHERE project_id=$1 AND last_seen_at>=$2 AND ended_at IS NULL AND `+visitsOnly+` ORDER BY last_seen_at DESC LIMIT 500`, projectID, since)
 	if err != nil {
 		return nil, err
 	}

@@ -87,8 +87,7 @@ func (s *Store) ListProjectUsers(ctx context.Context, projectID int64, days int,
 			COUNT(*),
 			COUNT(DISTINCT user_id) FILTER (WHERE user_id != '' AND error_count > 0 AND started_at >= $2)
 		FROM sessions
-		WHERE project_id = $1
-	`, projectID, since).Scan(
+		WHERE project_id = $1 AND `+visitsOnly, projectID, since).Scan(
 		&resp.TotalUsers,
 		&resp.ActiveUsers,
 		&resp.AvgDurationSec,
@@ -119,7 +118,7 @@ func (s *Store) ListProjectUsers(ctx context.Context, projectID int64, days int,
 			COUNT(DISTINCT CASE WHEN error_count > 0 THEN (CASE WHEN user_id != '' THEN user_id ELSE visitor_key END) END) AS error_users,
 			COALESCE(AVG(GREATEST(0, EXTRACT(EPOCH FROM (COALESCE(ended_at, last_seen_at) - started_at)))), 0) AS avg_duration_sec
 		FROM sessions
-		WHERE project_id = $1 AND started_at >= $2
+		WHERE project_id = $1 AND started_at >= $2 AND `+visitsOnly+`
 		GROUP BY 1
 		ORDER BY 1
 	`, projectID, since)
@@ -160,6 +159,7 @@ func (s *Store) ListProjectUsers(ctx context.Context, projectID int64, days int,
 		FROM sessions
 		WHERE project_id = $1
 		  AND started_at >= $2
+		  AND `+visitsOnly+`
 		  AND latitude IS NOT NULL
 		  AND longitude IS NOT NULL
 		GROUP BY 1, 2, 3, 4, 5, 6

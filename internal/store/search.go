@@ -111,6 +111,17 @@ func parseDate(val string) (time.Time, error) {
 	return time.Time{}, fmt.Errorf("cannot parse date %q", val)
 }
 
+// namesCategory reports whether the search picks a platform category itself;
+// ListSessions then lets it choose instead of hiding server processes.
+func namesCategory(q string) bool {
+	for _, tok := range tokenizeSearch(q) {
+		if tok.Key == "category" || tok.Key == "platform_category" {
+			return true
+		}
+	}
+	return false
+}
+
 // BuildSessionSearchWhere generates SQL filter expressions and adds parameters using nextPlaceholder.
 func BuildSessionSearchWhere(q string, nextPlaceholder func(any) string) (string, error) {
 	tokens := tokenizeSearch(q)
@@ -150,7 +161,7 @@ func BuildSessionSearchWhere(q string, nextPlaceholder func(any) string) (string
 			val := strings.ToLower(tok.Value)
 			ph := nextPlaceholder(val)
 			phLike := nextPlaceholder("%" + val + "%")
-			clauses = append(clauses, fmt.Sprintf("(LOWER(platform) = %s OR LOWER(device_json::jsonb->>'platform_category') = %s OR device_json::jsonb->>'platform_category' ILIKE %s)", ph, ph, phLike))
+			clauses = append(clauses, fmt.Sprintf("(LOWER(platform) = %s OR LOWER(platform_category) = %s OR platform_category ILIKE %s)", ph, ph, phLike))
 		case tok.Key == "os":
 			ph := nextPlaceholder("%" + tok.Value + "%")
 			phExact := nextPlaceholder(strings.ToLower(tok.Value))

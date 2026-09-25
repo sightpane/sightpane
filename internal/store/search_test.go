@@ -180,19 +180,21 @@ func TestSearchJSONColumnFilters(t *testing.T) {
 	}
 
 	now := time.Now().UTC()
-	insert := func(id, userID, user, device string) {
+	// platform_category is the column ingest fills from the device; category:
+	// reads it rather than the JSON.
+	insert := func(id, userID, user, device, category string) {
 		t.Helper()
-		if _, err := st.db.Exec(`INSERT INTO sessions(id, project_id, started_at, last_seen_at, user_id, user_json, device_json)
-			VALUES($1, $2, $3, $3, $4, $5, $6)`, id, proj.ID, now, userID, user, device); err != nil {
+		if _, err := st.db.Exec(`INSERT INTO sessions(id, project_id, started_at, last_seen_at, user_id, user_json, device_json, platform_category)
+			VALUES($1, $2, $3, $3, $4, $5, $6, $7)`, id, proj.ID, now, userID, user, device, category); err != nil {
 			t.Fatalf("insert %s: %v", id, err)
 		}
 	}
 	insert("mobile", "6a3b3a64edece80ecf272d15",
 		`{"id":"6a3b3a64edece80ecf272d15","email":"mustafa@privaterelay.appleid.com","name":"Mustafa Us"}`,
-		`{"platform":"ios","platform_category":"mobile","os":"iOS","arch":"arm64"}`)
+		`{"platform":"ios","platform_category":"mobile","os":"iOS","arch":"arm64"}`, "mobile")
 	insert("desktop", "",
 		`{}`,
-		`{"platform":"linux","platform_category":"desktop","os":"Ubuntu","arch":"x86_64","kernel":"Linux","browser_version":"128.0"}`)
+		`{"platform":"linux","platform_category":"desktop","os":"Ubuntu","arch":"x86_64","kernel":"Linux","browser_version":"128.0"}`, "desktop")
 
 	for _, tc := range []struct {
 		query string
