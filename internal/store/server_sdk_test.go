@@ -54,7 +54,7 @@ func TestServerSDKProcessIsNotASession(t *testing.T) {
 		"session": {
 			"id": "go-process",
 			"started_at": %q,
-			"device": {"platform": "go", "platform_category": "backend", "app_type": "server", "os": "linux", "arch": "amd64"}
+			"device": {"platform": "go", "platform_category": "backend", "app_type": "server", "os": "linux", "arch": "amd64", "release": "v2.0.0"}
 		},
 		"items": [
 			{"type": "event", "name": "runtime_metrics", "props": {"goroutines": 12}},
@@ -67,7 +67,7 @@ func TestServerSDKProcessIsNotASession(t *testing.T) {
 			"id": "phone",
 			"started_at": %q,
 			"user": {"id": "u-1", "email": "mustafa@example.com", "name": "Mustafa Us"},
-			"device": {"platform": "iOS", "platform_category": "mobile", "app_type": "mobile", "os": "iOS"}
+			"device": {"platform": "iOS", "platform_category": "mobile", "app_type": "mobile", "os": "iOS", "release": "1.0.0"}
 		},
 		"items": [{"type": "heartbeat", "route": "/patterns"}]
 	}`, now.Add(-time.Minute).Format(time.RFC3339Nano)))
@@ -159,6 +159,19 @@ func TestServerSDKProcessIsNotASession(t *testing.T) {
 		today := users.Daily[len(users.Daily)-1]
 		if today.ActiveUsers != 1 {
 			t.Errorf("today's active users = %d, want 1", today.ActiveUsers)
+		}
+	})
+
+	t.Run("release health", func(t *testing.T) {
+		releases, err := st.ListReleases(ctx, proj.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(releases) != 1 || releases[0].Version != "1.0.0" {
+			t.Fatalf("releases = %+v, want only the app's 1.0.0", releases)
+		}
+		if releases[0].AdoptionRate != 100 || releases[0].CrashFreeRate != 100 {
+			t.Errorf("1.0.0 adoption, crash free = %v, %v; want 100, 100", releases[0].AdoptionRate, releases[0].CrashFreeRate)
 		}
 	})
 

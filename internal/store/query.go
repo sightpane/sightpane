@@ -67,7 +67,8 @@ type SessionFilter struct {
 // visitsOnly leaves out the row a server SDK opens for its process (see
 // migrations/postgres/0026_session_platform_category.sql): it is not a visit, so
 // every query that lists or counts sessions ANDs this in. Looking a session up by
-// id, exporting or deleting a user's data, and retention do not.
+// id, exporting or deleting a user's data, and retention do not. It starts with
+// the bare column, so a query that aliases sessions writes `s.` + visitsOnly.
 const visitsOnly = `platform_category <> 'backend'`
 
 const sessionCols = `id, project_id, started_at, last_seen_at, ended_at, user_id, user_json, device_json, props_json, platform, release, error_count, event_count, frame_count, ip, browser, visitor_key, current_route, sdk_name, sdk_version, app_type, os, os_version, country_code, country_name, region, city, latitude, longitude`

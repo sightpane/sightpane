@@ -21,7 +21,7 @@ type ReleaseHealth struct {
 
 func (s *Store) ListReleases(ctx context.Context, projectID int64) ([]ReleaseHealth, error) {
 	var totalSessions int64
-	_ = s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM sessions WHERE project_id=$1`, projectID).Scan(&totalSessions)
+	_ = s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM sessions WHERE project_id=$1 AND `+visitsOnly, projectID).Scan(&totalSessions)
 
 	q := `
 		SELECT
@@ -33,7 +33,7 @@ func (s *Store) ListReleases(ctx context.Context, projectID int64) ([]ReleaseHea
 			COALESCE(SUM(s.error_count), 0),
 			COUNT(DISTINCT s.user_id)
 		FROM sessions s
-		WHERE s.project_id = $1 AND s.release != ''
+		WHERE s.project_id = $1 AND s.release != '' AND s.` + visitsOnly + `
 		GROUP BY s.release
 		ORDER BY MAX(s.last_seen_at) DESC
 	`
@@ -80,7 +80,7 @@ func (s *Store) ListReleases(ctx context.Context, projectID int64) ([]ReleaseHea
 
 func (s *Store) GetReleaseHealth(ctx context.Context, projectID int64, version string) (*ReleaseHealth, error) {
 	var totalSessions int64
-	_ = s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM sessions WHERE project_id=$1`, projectID).Scan(&totalSessions)
+	_ = s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM sessions WHERE project_id=$1 AND `+visitsOnly, projectID).Scan(&totalSessions)
 
 	q := `
 		SELECT
@@ -92,7 +92,7 @@ func (s *Store) GetReleaseHealth(ctx context.Context, projectID int64, version s
 			COALESCE(SUM(s.error_count), 0),
 			COUNT(DISTINCT s.user_id)
 		FROM sessions s
-		WHERE s.project_id = $1 AND s.release = $2
+		WHERE s.project_id = $1 AND s.release = $2 AND s.` + visitsOnly + `
 		GROUP BY s.release
 	`
 	row := s.db.QueryRowContext(ctx, q, projectID, version)
