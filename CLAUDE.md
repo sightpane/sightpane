@@ -62,6 +62,8 @@ GitHub CLI as `env -u GITHUB_TOKEN gh …`.
 
 Everything hinges on `POST /api/v1/envelope` (header `X-Sightpane-Key`), body `{sdk, session{id, started_at, user, device, props}, items[]}`. Item `type` values: `breadcrumb`, `event`, `error`, `frame` (base64 PNG + `taps`), `pointer` (`events[{t,x,y,k}]`), `heartbeat` (updates session `last_seen_at`/`current_route`, writes no row), `session_end`. Backend answers 202 `{accepted, rejected}`; unknown items are silently counted as rejected, so contract drift does not fail loudly.
 
+`session.device` is free-form JSON, but these keys mean something here: `platform_category` (`web`/`mobile`/`desktop`, or `backend` from a server SDK — that session is a process, not a visit, and `visitsOnly` in `internal/store/query.go` keeps it out of every list and count of sessions), and on phones `manufacturer`, `brand`, `model` (Android's `ro.product.model`, or an iPhone's identifier such as `iPhone17,3`) and `model_name` (the marketed name; ingest fills it for iPhones from `internal/store/apple_models.go`).
+
 The contract lives in three repositories and they must move together:
 - **here** — `internal/store/ingest.go` (`Envelope`, `itemHead`, the `switch` in `Ingest`), pinned by `internal/server/server_test.go`
 - [sightpane/flutter](https://github.com/sightpane/flutter) — `lib/src/models.dart` (`SightpaneItem` factories, `SightpaneEnvelope.toJson`), pinned by its `test/models_test.dart`
