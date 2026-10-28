@@ -503,6 +503,10 @@ type LiveViewer struct {
 	SessionID string `json:"session_id"`
 	UserID    string `json:"user_id"`
 	UserLabel string `json:"user_label"`
+	// UserName and UserEmail are the parts UserLabel picks from, so the
+	// dashboard can title a viewer by name and put the email under it.
+	UserName  string `json:"user_name"`
+	UserEmail string `json:"user_email"`
 	IP        string `json:"ip"`
 	Browser   string `json:"browser"`
 	Platform  string `json:"platform"`
@@ -544,9 +548,14 @@ func (s *Store) Live(projectID int64, window int) (*LiveStatus, error) {
 			return nil, err
 		}
 		var u struct {
-			Email, Name string
+			Email, Name, Username string
 		}
 		_ = json.Unmarshal([]byte(userJSON), &u)
+		v.UserEmail = u.Email
+		v.UserName = u.Name
+		if v.UserName == "" {
+			v.UserName = u.Username
+		}
 		v.UserLabel = u.Email
 		if v.UserLabel == "" {
 			v.UserLabel = u.Name
