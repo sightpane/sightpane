@@ -5,6 +5,9 @@ on:
     branches: [main]
     tags: ['v*']
   pull_request:
+  # Republish main by hand, e.g. after a dashboard change: the image bundles
+  # sightpane/ui, whose merges do not trigger this repository.
+  workflow_dispatch:
 
 # A push that lands while an earlier run is still going cancels it: the older
 # answer is about code nobody is looking at any more.
@@ -120,7 +123,7 @@ jobs:
   publish:
     name: publish container package
     needs: [test, lint, image]
-    if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))
+    if: (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))
     runs-on: ubuntu-latest
     permissions:
       contents: read
