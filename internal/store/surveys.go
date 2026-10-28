@@ -20,7 +20,14 @@ type SurveyTargeting struct {
 	URLPattern   string  `json:"url_pattern,omitempty"`
 	EventTrigger string  `json:"event_trigger,omitempty"`
 	SampleRate   float64 `json:"sample_rate,omitempty"`
+	// DelaySeconds is how long the SDK waits after the trigger (the event, or
+	// arriving on a matching page) before it shows the survey. 0 is at once.
+	DelaySeconds int `json:"delay_seconds,omitempty"`
 }
+
+// MaxSurveyDelaySeconds bounds DelaySeconds: an hour. Longer than that and the
+// person has most likely left the screen the survey was about.
+const MaxSurveyDelaySeconds = 3600
 
 type Survey struct {
 	ID          int64           `json:"id"`
