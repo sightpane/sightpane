@@ -26,9 +26,16 @@ RUN curl -fsSL "https://storage.googleapis.com/flutter_infra_release/releases/st
 ENV PATH="/opt/flutter/bin:${PATH}"
 RUN git config --global --add safe.directory /opt/flutter && flutter config --no-analytics --enable-web && flutter precache --web
 WORKDIR /src
+# The commit UI_REF pointed at when the build started. A RUN is cached by its
+# text, and "clone main" reads the same every time, so without this a new
+# dashboard on main is served from the old cached layer. CI passes the resolved
+# SHA; a build without it behaves as before. Declared here, after the Flutter
+# install, so a new dashboard does not throw away the cached SDK.
+ARG UI_SHA=
 # UI_REF=none leaves the directory empty, and the runtime image then falls back
 # to the placeholder page compiled into the binary.
-RUN mkdir -p /out && if [ "$UI_REF" != "none" ]; then \
+RUN echo "dashboard: ${UI_REF} ${UI_SHA:-(unresolved)}" && \
+    mkdir -p /out && if [ "$UI_REF" != "none" ]; then \
       git clone --depth 1 --branch "$UI_REF" "$UI_REPO" ui && \
       cd ui && flutter pub get && \
       flutter build web --release --dart-define=SIGHTPANE_API_URL= && \
