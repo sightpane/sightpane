@@ -102,6 +102,8 @@ func New(st *store.Store, notifier *alert.Notifier, uiDir string, embedded fs.FS
 	api.Post("/envelope", s.ingest)
 	api.Post("/flags/evaluate", s.evaluateFlags)
 	api.Get("/surveys/active", s.activeSurveys)
+	api.Get("/surveys/due", s.dueSurveys)
+	api.Post("/surveys/:surveyId/shown", s.surveyShown)
 	api.Post("/surveys/:surveyId/responses", s.submitSurveyResponse)
 	api.Post("/crons/:slug/checkin", s.cronCheckin)
 	api.Get("/crons/:slug/checkin", s.cronCheckin)
