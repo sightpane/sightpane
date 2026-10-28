@@ -146,10 +146,17 @@ jobs:
             type=ref,event=branch
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
+      # The dashboard layer is cached by its command text, which never changes;
+      # its commit as a build arg makes a new dashboard on main rebuild it.
+      - name: Resolve the dashboard commit
+        id: ui
+        run: echo "sha=$(git ls-remote https://github.com/sightpane/ui.git refs/heads/main | cut -f1)" >> "$GITHUB_OUTPUT"
       - name: Build and push container image
         uses: docker/build-push-action@v6
         with:
           context: .
+          build-args: |
+            UI_SHA=${{ steps.ui.outputs.sha }}
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
