@@ -248,6 +248,62 @@ func TestSurveyAnswerBeforeItsSessionArrives(t *testing.T) {
 	}
 }
 
+// The delay after the trigger is stored with the targeting, reaches the SDK
+// through /surveys/active, and stays within 0 to an hour.
+func TestSurveyTriggerDelay(t *testing.T) {
+	app, st := newTestServer(t)
+	p, err := st.ProjectByID(1)
+	if err != nil {
+		t.Fatalf("project by id: %v", err)
+	}
+	rr := post(t, app, "/api/v1/projects/1/surveys", "", map[string]any{
+		"name": "After paying", "type": "csat", "question": "Happy?",
+		"targeting": map[string]any{"event_trigger": "purchase", "delay_seconds": 30},
+		"active":    true,
+	})
+	if rr.Code != 201 {
+		t.Fatalf("create: %d %s", rr.Code, rr.Body.String())
+	}
+	var survey store.Survey
+	_ = json.Unmarshal(rr.Body.Bytes(), &survey)
+	if survey.Targeting.DelaySeconds != 30 {
+		t.Fatalf("created delay: %+v", survey.Targeting)
+	}
+
+	var active struct {
+		Surveys []map[string]any `json:"surveys"`
+	}
+	get(t, app, fmt.Sprintf("/api/v1/surveys/active?key=%s", p.APIKey), &active)
+	if len(active.Surveys) != 1 {
+		t.Fatalf("active: %+v", active.Surveys)
+	}
+	targeting, _ := active.Surveys[0]["targeting"].(map[string]any)
+	if targeting["delay_seconds"] != float64(30) || targeting["event_trigger"] != "purchase" {
+		t.Fatalf("active targeting as the SDK sees it: %+v", targeting)
+	}
+
+	path := fmt.Sprintf("/api/v1/projects/1/surveys/%d", survey.ID)
+	for _, bad := range []int{-1, store.MaxSurveyDelaySeconds + 1} {
+		rr := post(t, app, "/api/v1/projects/1/surveys", "", map[string]any{
+			"name": "x", "type": "csat", "question": "x",
+			"targeting": map[string]any{"delay_seconds": bad},
+		})
+		if rr.Code != 400 {
+			t.Errorf("create with delay %d: %d, want 400", bad, rr.Code)
+		}
+		if rr := put(t, app, path, "", map[string]any{
+			"targeting": map[string]any{"delay_seconds": bad},
+		}); rr.Code != 400 {
+			t.Errorf("update with delay %d: %d, want 400", bad, rr.Code)
+		}
+	}
+	var kept store.Survey
+	get(t, app, path, &kept)
+	if kept.Targeting.DelaySeconds != 30 {
+		t.Fatalf("a rejected update changed the delay: %+v", kept.Targeting)
+	}
+}
+
 // The dashboard's Active switch sends `{"active": false}` alone. That must not
 // wipe the targeting and description, or a survey aimed at one page starts
 // showing on every page the moment it is switched back on.

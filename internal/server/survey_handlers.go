@@ -46,6 +46,11 @@ type submitSurveyResponseRequest struct {
 	ResponseText string  `json:"response_text"`
 }
 
+// validSurveyDelay: 0 to store.MaxSurveyDelaySeconds seconds.
+func validSurveyDelay(t store.SurveyTargeting) bool {
+	return t.DelaySeconds >= 0 && t.DelaySeconds <= store.MaxSurveyDelaySeconds
+}
+
 // activeSurveys returns surveys currently active for client SDK targeting.
 func (s *Server) activeSurveys(c fiber.Ctx) error {
 	key := projectKey(c)
@@ -223,6 +228,9 @@ func (s *Server) createSurvey(c fiber.Ctx) error {
 	if question == "" {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "question is required"})
 	}
+	if !validSurveyDelay(req.Targeting) {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid trigger delay"})
+	}
 
 	active := true
 	if req.Active != nil {
@@ -293,6 +301,9 @@ func (s *Server) updateSurvey(c fiber.Ctx) error {
 		existing.Choices = req.Choices
 	}
 	if req.Targeting != nil {
+		if !validSurveyDelay(*req.Targeting) {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid trigger delay"})
+		}
 		existing.Targeting = *req.Targeting
 	}
 	if req.Active != nil {
