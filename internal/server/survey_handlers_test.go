@@ -11,6 +11,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"sightpane/internal/store"
 )
@@ -301,6 +302,108 @@ func TestSurveyTriggerDelay(t *testing.T) {
 	get(t, app, path, &kept)
 	if kept.Targeting.DelaySeconds != 30 {
 		t.Fatalf("a rejected update changed the delay: %+v", kept.Targeting)
+	}
+}
+
+// A server-scheduled survey is due once its trigger event is older than its
+// delay, for that user in any session, until the SDK says it showed it; a later
+// trigger makes it due again.
+func TestSurveyServerScheduled(t *testing.T) {
+	app, st := newTestServer(t)
+	p, err := st.ProjectByID(1)
+	if err != nil {
+		t.Fatalf("project by id: %v", err)
+	}
+	create := func(body map[string]any) store.Survey {
+		t.Helper()
+		rr := post(t, app, "/api/v1/projects/1/surveys", "", body)
+		if rr.Code != 201 {
+			t.Fatalf("create: %d %s", rr.Code, rr.Body.String())
+		}
+		var sur store.Survey
+		_ = json.Unmarshal(rr.Body.Bytes(), &sur)
+		return sur
+	}
+	sched := create(map[string]any{
+		"name": "After paying", "type": "csat", "question": "Happy?", "active": true,
+		"targeting": map[string]any{"event_trigger": "purchase", "delay_seconds": 30, "server_scheduled": true},
+	})
+	// The same trigger timed by the SDK is never in /surveys/due.
+	create(map[string]any{
+		"name": "Local", "type": "csat", "question": "Local?", "active": true,
+		"targeting": map[string]any{"event_trigger": "purchase", "delay_seconds": 30},
+	})
+	if rr := post(t, app, "/api/v1/projects/1/surveys", "", map[string]any{
+		"name": "x", "type": "csat", "question": "x",
+		"targeting": map[string]any{"server_scheduled": true},
+	}); rr.Code != 400 {
+		t.Fatalf("server scheduling without an event: %d, want 400", rr.Code)
+	}
+
+	purchase := func(session string, ago time.Duration) {
+		t.Helper()
+		ts := time.Now().UTC().Add(-ago).Format(time.RFC3339Nano)
+		rr := post(t, app, "/api/v1/envelope", p.APIKey, envelope(session, map[string]any{"type": "event", "ts": ts, "name": "purchase"}))
+		if rr.Code != 202 {
+			t.Fatalf("envelope: %d %s", rr.Code, rr.Body.String())
+		}
+	}
+	due := func(session string) []string {
+		t.Helper()
+		var resp struct {
+			Surveys []store.Survey `json:"surveys"`
+		}
+		rr := get(t, app, fmt.Sprintf("/api/v1/surveys/due?key=%s&session=%s", p.APIKey, session), &resp)
+		if rr.Code != 200 {
+			t.Fatalf("due: %d %s", rr.Code, rr.Body.String())
+		}
+		names := []string{}
+		for _, s := range resp.Surveys {
+			names = append(names, s.Name)
+		}
+		return names
+	}
+
+	purchase("d1", 10*time.Second)
+	if got := due("d1"); len(got) != 0 {
+		t.Fatalf("due before the delay: %v", got)
+	}
+	purchase("d1", 40*time.Second)
+	if got := due("d1"); len(got) != 1 || got[0] != "After paying" {
+		t.Fatalf("due after the delay: %v", got)
+	}
+	// The envelope helper's user is u1: another session of theirs sees it too.
+	post(t, app, "/api/v1/envelope", p.APIKey, envelope("d2", map[string]any{"type": "heartbeat", "route": "/home"}))
+	if got := due("d2"); len(got) != 1 {
+		t.Fatalf("due in the same user's other session: %v", got)
+	}
+
+	shown := fmt.Sprintf("/api/v1/surveys/%d/shown?key=%s", sched.ID, p.APIKey)
+	if rr := post(t, app, shown, p.APIKey, map[string]any{"session_id": "d2"}); rr.Code != 204 {
+		t.Fatalf("shown: %d %s", rr.Code, rr.Body.String())
+	}
+	if got := due("d1"); len(got) != 0 {
+		t.Fatalf("due after it was shown: %v", got)
+	}
+	// A trigger after it was shown makes it due again.
+	if err := st.MarkSurveyShown(1, sched.ID, "d1", time.Now().UTC().Add(-time.Hour)); err != nil {
+		t.Fatalf("mark shown an hour ago: %v", err)
+	}
+	if got := due("d1"); len(got) != 1 {
+		t.Fatalf("due after a newer trigger: %v", got)
+	}
+
+	if got := due("nobody"); len(got) != 0 {
+		t.Fatalf("an unknown session: %v", got)
+	}
+	if rr := get(t, app, fmt.Sprintf("/api/v1/surveys/due?key=%s", p.APIKey), nil); rr.Code != 400 {
+		t.Fatalf("due without a session: %d, want 400", rr.Code)
+	}
+	if rr := get(t, app, "/api/v1/surveys/due?key=nope&session=d1", nil); rr.Code != 401 {
+		t.Fatalf("due with an unknown key: %d, want 401", rr.Code)
+	}
+	if rr := post(t, app, shown, p.APIKey, map[string]any{"session_id": "nobody"}); rr.Code != 404 {
+		t.Fatalf("shown for an unknown session: %d, want 404", rr.Code)
 	}
 }
 

@@ -46,6 +46,82 @@ type submitSurveyResponseRequest struct {
 	ResponseText string  `json:"response_text"`
 }
 
+// validServerScheduling: the backend can only time a trigger it sees, an event.
+func validServerScheduling(t store.SurveyTargeting) bool {
+	return !t.ServerScheduled || strings.TrimSpace(t.EventTrigger) != ""
+}
+
+// sdkProject resolves the project an SDK request belongs to, from its project
+// key or a project API token, the way the other SDK survey endpoints do.
+func (s *Server) sdkProject(c fiber.Ctx) (*store.Project, error) {
+	if key := projectKey(c); key != "" {
+		p, err := s.store.ProjectByKey(key)
+		if errors.Is(err, store.ErrNotFound) {
+			return nil, apierr.New(fiber.StatusUnauthorized, apierr.CodeUnknownKey, "unknown api key")
+		}
+		return p, err
+	}
+	tok := bearer(c)
+	if tok == "" || !(strings.HasPrefix(tok, "sp_") || strings.HasPrefix(tok, "hog_")) {
+		return nil, apierr.New(fiber.StatusUnauthorized, apierr.CodeKeyRequired, "API key required")
+	}
+	apiTok, err := s.store.APITokenBySecret(tok)
+	if err != nil || (apiTok.ExpiresAt != nil && time.Now().After(*apiTok.ExpiresAt)) {
+		return nil, apierr.New(fiber.StatusUnauthorized, apierr.CodeInvalidToken, "invalid or expired API token")
+	}
+	if apiTok.ProjectID == nil {
+		return nil, apierr.New(fiber.StatusBadRequest, apierr.CodeProjectNotFound, "project not found for token")
+	}
+	return s.store.ProjectByID(*apiTok.ProjectID)
+}
+
+// dueSurveys lists the server-scheduled surveys due for the person behind
+// ?session=, for the SDK to show whatever page they are on.
+func (s *Server) dueSurveys(c fiber.Ctx) error {
+	p, err := s.sdkProject(c)
+	if err != nil {
+		return err
+	}
+	sessionID := strings.TrimSpace(c.Query("session"))
+	if sessionID == "" {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "session is required"})
+	}
+	due, err := s.store.DueSurveys(p.ID, sessionID, time.Now().UTC())
+	if err != nil {
+		return err
+	}
+	return c.JSON(fiber.Map{"surveys": due})
+}
+
+type surveyShownRequest struct {
+	SessionID string `json:"session_id"`
+}
+
+// surveyShown records that the SDK showed a server-scheduled survey, so the
+// trigger that made it due does not bring it back.
+func (s *Server) surveyShown(c fiber.Ctx) error {
+	p, err := s.sdkProject(c)
+	if err != nil {
+		return err
+	}
+	surveyID, err := strconv.ParseInt(c.Params("surveyId"), 10, 64)
+	if err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid survey id"})
+	}
+	var req surveyShownRequest
+	if err := c.Bind().JSON(&req); err != nil || strings.TrimSpace(req.SessionID) == "" {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "session_id is required"})
+	}
+	err = s.store.MarkSurveyShown(p.ID, surveyID, strings.TrimSpace(req.SessionID), time.Now().UTC())
+	if errors.Is(err, store.ErrSurveyNotFound) || errors.Is(err, store.ErrNotFound) {
+		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "survey or session not found"})
+	}
+	if err != nil {
+		return err
+	}
+	return c.SendStatus(fiber.StatusNoContent)
+}
+
 // validSurveyDelay: 0 to store.MaxSurveyDelaySeconds seconds.
 func validSurveyDelay(t store.SurveyTargeting) bool {
 	return t.DelaySeconds >= 0 && t.DelaySeconds <= store.MaxSurveyDelaySeconds
@@ -231,6 +307,9 @@ func (s *Server) createSurvey(c fiber.Ctx) error {
 	if !validSurveyDelay(req.Targeting) {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid trigger delay"})
 	}
+	if !validServerScheduling(req.Targeting) {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "server scheduling needs an event trigger"})
+	}
 
 	active := true
 	if req.Active != nil {
@@ -303,6 +382,9 @@ func (s *Server) updateSurvey(c fiber.Ctx) error {
 	if req.Targeting != nil {
 		if !validSurveyDelay(*req.Targeting) {
 			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid trigger delay"})
+		}
+		if !validServerScheduling(*req.Targeting) {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "server scheduling needs an event trigger"})
 		}
 		existing.Targeting = *req.Targeting
 	}

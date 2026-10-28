@@ -23,7 +23,16 @@ type SurveyTargeting struct {
 	// DelaySeconds is how long the SDK waits after the trigger (the event, or
 	// arriving on a matching page) before it shows the survey. 0 is at once.
 	DelaySeconds int `json:"delay_seconds,omitempty"`
+	// ServerScheduled hands the delay to the backend: the survey is due once
+	// its trigger event is DelaySeconds old, whatever page the person is on by
+	// then, and still due on their next launch within SurveyDueWindow. The SDK
+	// asks /surveys/due instead of timing it. Needs an EventTrigger.
+	ServerScheduled bool `json:"server_scheduled,omitempty"`
 }
+
+// SurveyDueWindow is how long after its delay a server-scheduled survey stays
+// due: a person who was away when it fell due sees it on a launch within a day.
+const SurveyDueWindow = 24 * time.Hour
 
 // MaxSurveyDelaySeconds bounds DelaySeconds: an hour. Longer than that and the
 // person has most likely left the screen the survey was about.
@@ -509,4 +518,95 @@ func (s *Store) GetSurveyResults(projectID, surveyID int64) (*SurveyResults, err
 	}
 
 	return results, nil
+}
+
+// surveyUserKey is who a server-scheduled survey is due for: the user id when
+// the session has one, so it follows them to a new session or device, else the
+// session itself.
+func surveyUserKey(sessionID, userID string) string {
+	if userID != "" {
+		return "u:" + userID
+	}
+	return "s:" + sessionID
+}
+
+// sessionUser returns the user id of a session of this project; ErrNotFound
+// when the session is not in the project.
+func (s *Store) sessionUser(projectID int64, sessionID string) (string, error) {
+	var userID string
+	err := s.db.QueryRow(`SELECT user_id FROM sessions WHERE id=$1 AND project_id=$2`, sessionID, projectID).Scan(&userID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", ErrNotFound
+	}
+	return userID, err
+}
+
+// DueSurveys lists the server-scheduled surveys due for the person behind a
+// session at [now]: their trigger event arrived between SurveyDueWindow plus
+// the delay ago and the delay ago, from this user (any session) or, without a
+// user id, from this session; and it has not been shown since that event.
+func (s *Store) DueSurveys(projectID int64, sessionID string, now time.Time) ([]*Survey, error) {
+	userID, err := s.sessionUser(projectID, sessionID)
+	if errors.Is(err, ErrNotFound) {
+		return []*Survey{}, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	all, err := s.ListSurveys(projectID)
+	if err != nil {
+		return nil, err
+	}
+	key := surveyUserKey(sessionID, userID)
+	due := []*Survey{}
+	for _, sur := range all {
+		t := sur.Targeting
+		if !sur.Active || !t.ServerScheduled || t.EventTrigger == "" {
+			continue
+		}
+		to := now.Add(-time.Duration(t.DelaySeconds) * time.Second)
+		from := to.Add(-SurveyDueWindow)
+		var last sql.NullTime
+		if userID != "" {
+			err = s.db.QueryRow(`SELECT max(i.ts) FROM items i JOIN sessions se ON se.id = i.session_id
+				WHERE i.project_id=$1 AND i.type='event' AND i.name=$2 AND se.user_id=$3 AND i.ts>=$4 AND i.ts<=$5`,
+				projectID, t.EventTrigger, userID, from, to).Scan(&last)
+		} else {
+			err = s.db.QueryRow(`SELECT max(ts) FROM items
+				WHERE project_id=$1 AND type='event' AND name=$2 AND session_id=$3 AND ts>=$4 AND ts<=$5`,
+				projectID, t.EventTrigger, sessionID, from, to).Scan(&last)
+		}
+		if err != nil {
+			return nil, fmt.Errorf("due survey %d: %w", sur.ID, err)
+		}
+		if !last.Valid {
+			continue
+		}
+		var shown sql.NullTime
+		err = s.db.QueryRow(`SELECT shown_at FROM survey_shown WHERE survey_id=$1 AND user_key=$2`, sur.ID, key).Scan(&shown)
+		if err != nil && !errors.Is(err, sql.ErrNoRows) {
+			return nil, fmt.Errorf("survey %d shown: %w", sur.ID, err)
+		}
+		if shown.Valid && !shown.Time.Before(last.Time) {
+			continue
+		}
+		due = append(due, sur)
+	}
+	return due, nil
+}
+
+// MarkSurveyShown records that the SDK showed a survey to the person behind a
+// session, so the trigger that made it due does not bring it back.
+func (s *Store) MarkSurveyShown(projectID, surveyID int64, sessionID string, now time.Time) error {
+	if _, err := s.GetSurvey(projectID, surveyID); err != nil {
+		return err
+	}
+	userID, err := s.sessionUser(projectID, sessionID)
+	if err != nil {
+		return err
+	}
+	_, err = s.db.Exec(`INSERT INTO survey_shown(survey_id, user_key, shown_at) VALUES($1,$2,$3)
+		ON CONFLICT (survey_id, user_key) DO UPDATE SET shown_at=excluded.shown_at`,
+		surveyID, surveyUserKey(sessionID, userID), now)
+	return err
 }
