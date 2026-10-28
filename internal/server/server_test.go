@@ -435,6 +435,7 @@ func TestVisitorsAndLive(t *testing.T) {
 	// The same user id from another browser is a separate visitor.
 	e2 := envelope("v2", map[string]any{"type": "breadcrumb", "category": "navigation", "message": "/tables"})
 	e2["session"].(map[string]any)["device"] = map[string]any{"platform": "web", "browser": "Firefox"}
+	e2["session"].(map[string]any)["user"] = map[string]any{"id": "u1", "email": "a@b.c", "name": "Ayşe Kaya"}
 	post(t, h, "/api/v1/envelope", "key1", e2)
 	// Same user, same browser, same IP: one visitor, even in a new session.
 	post(t, h, "/api/v1/envelope", "key1", envelope("v3", map[string]any{"type": "heartbeat", "route": "/cashier"}))
@@ -460,6 +461,12 @@ func TestVisitorsAndLive(t *testing.T) {
 	}
 	if !strings.Contains(strings.Join(seen, ","), "v2:/tables:Firefox:a@b.c") {
 		t.Fatalf("viewers: %v", seen)
+	}
+	// The name and the email come separately too, for a viewer titled by name.
+	for _, v := range live.Viewers {
+		if v.SessionID == "v2" && (v.UserName != "Ayşe Kaya" || v.UserEmail != "a@b.c") {
+			t.Fatalf("v2 name/email: %q / %q", v.UserName, v.UserEmail)
+		}
 	}
 	// A heartbeat stores no item of its own; all it leaves behind is the route
 	// and the visitor key on the session row.
